@@ -1,11 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { compareVersions, parseChecksums, runUpdate } from "../src/update.js";
+import { type FakeGitHub, fakeGitHub, publish, releaseArchive } from "./fake-github.js";
 import { cli, tempDir } from "./helpers.js";
 
 const TARGET = "linux-x64";
@@ -34,55 +32,19 @@ describe("compareVersions", () => {
 	});
 });
 
-interface FakeGitHub {
-	url: string;
-	/** Tag served by releases/latest; undefined means the repository has no releases. */
-	latest: string | undefined;
-	files: Map<string, Buffer>;
-}
-
-const servers: Server[] = [];
+const opened: FakeGitHub[] = [];
 afterEach(async () => {
-	await Promise.all(servers.splice(0).map((server) => new Promise((done) => server.close(done))));
+	await Promise.all(opened.splice(0).map((github) => github.close()));
 });
 
-/** Serve GitHub's release URL shapes: the latest redirect and release downloads. */
-async function fakeGitHub(): Promise<FakeGitHub> {
-	const state: FakeGitHub = { url: "", latest: undefined, files: new Map() };
-	const server = createServer((request, response) => {
-		const path = request.url ?? "";
-		if (path === "/releases/latest") {
-			response.writeHead(302, { location: state.latest ? `${state.url}/tag/${state.latest}` : state.url });
-			response.end();
-			return;
-		}
-		const file = state.files.get(path.replace(/^\/releases\/download\//, ""));
-		response.writeHead(file ? 200 : 404);
-		response.end(file);
-	});
-	await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-	servers.push(server);
-	state.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/releases`;
-	return state;
+async function startGitHub(): Promise<FakeGitHub> {
+	const server = await fakeGitHub();
+	opened.push(server);
+	return server;
 }
 
-/** A release archive whose "binary" is a script printing the given version. */
-function releaseArchive(reportedVersion: string): Buffer {
-	const stage = tempDir("shipshape-stage-");
-	writeFileSync(join(stage, "shipshape"), `#!/bin/sh\necho ${reportedVersion}\n`);
-	chmodSync(join(stage, "shipshape"), 0o755);
-	writeFileSync(join(stage, "LICENSE"), "MIT\n");
-	const archive = join(stage, ASSET);
-	execFileSync("tar", ["-czf", archive, "-C", stage, "shipshape", "LICENSE"]);
-	return readFileSync(archive);
-}
-
-function publish(github: FakeGitHub, tag: string, archive: Buffer, sums = archive): void {
-	github.latest = tag;
-	github.files.set(`${tag}/${ASSET}`, archive);
-	const sha = createHash("sha256").update(sums).digest("hex");
-	github.files.set(`${tag}/SHA256SUMS`, Buffer.from(`${sha}  ${ASSET}\n`));
-}
+const archiveReporting = (version: string) => releaseArchive(ASSET, version);
+const release = (server: FakeGitHub, tag: string, archive: Buffer, sums?: Buffer) => publish(server, tag, ASSET, archive, sums);
 
 /** An installed release binary at bin/shipshape. */
 function installed(version: string): string {
@@ -100,8 +62,8 @@ function options(github: FakeGitHub, executable: string, overrides: Partial<Para
 
 describe.skipIf(process.platform === "win32")("self-update", () => {
 	it("replaces the installed binary with a verified newer release", async () => {
-		const github = await fakeGitHub();
-		publish(github, "v0.2.0", releaseArchive("0.2.0"));
+		const github = await startGitHub();
+		release(github, "v0.2.0", archiveReporting("0.2.0"));
 		const binary = installed("0.1.0");
 		const outcome = await runUpdate(options(github, binary));
 		expect(outcome).toEqual({ status: "updated", current: "0.1.0", latest: "0.2.0", path: binary });
@@ -111,8 +73,8 @@ describe.skipIf(process.platform === "win32")("self-update", () => {
 	});
 
 	it("updates the real file behind a symlinked install", async () => {
-		const github = await fakeGitHub();
-		publish(github, "v0.2.0", releaseArchive("0.2.0"));
+		const github = await startGitHub();
+		release(github, "v0.2.0", archiveReporting("0.2.0"));
 		const real = installed("0.1.0");
 		const link = join(tempDir(), "shipshape");
 		symlinkSync(real, link);
@@ -123,8 +85,8 @@ describe.skipIf(process.platform === "win32")("self-update", () => {
 	});
 
 	it("reports without installing when only checking or already current", async () => {
-		const github = await fakeGitHub();
-		publish(github, "v0.2.0", releaseArchive("0.2.0"));
+		const github = await startGitHub();
+		release(github, "v0.2.0", archiveReporting("0.2.0"));
 		const binary = installed("0.1.0");
 		expect(await runUpdate(options(github, binary, { checkOnly: true }))).toEqual({ status: "available", current: "0.1.0", latest: "0.2.0" });
 		expect(await runUpdate(options(github, binary, { currentVersion: "0.2.0" }))).toMatchObject({ status: "up_to_date" });
@@ -133,15 +95,15 @@ describe.skipIf(process.platform === "win32")("self-update", () => {
 	});
 
 	it.each([
-		["a checksum mismatch", (github: FakeGitHub) => publish(github, "v0.2.0", releaseArchive("0.2.0"), Buffer.from("tampered")), /Checksum mismatch/],
-		["a binary reporting the wrong version", (github: FakeGitHub) => publish(github, "v0.2.0", releaseArchive("0.1.9")), /reports version "0.1.9", expected "0.2.0"/],
+		["a checksum mismatch", (github: FakeGitHub) => release(github, "v0.2.0", archiveReporting("0.2.0"), Buffer.from("tampered")), /Checksum mismatch/],
+		["a binary reporting the wrong version", (github: FakeGitHub) => release(github, "v0.2.0", archiveReporting("0.1.9")), /reports version "0.1.9", expected "0.2.0"/],
 		["no asset for this platform", (github: FakeGitHub) => {
-			publish(github, "v0.2.0", releaseArchive("0.2.0"));
+			release(github, "v0.2.0", archiveReporting("0.2.0"));
 			github.files.set("v0.2.0/SHA256SUMS", Buffer.from(`${"c".repeat(64)}  shipshape-darwin-arm64.tar.gz\n`));
 		}, /has no shipshape-linux-x64.tar.gz/],
 		["a repository with no releases", () => {}, /No published release found/],
 	])("refuses %s and leaves the installed binary alone", async (_case, setup, message) => {
-		const github = await fakeGitHub();
+		const github = await startGitHub();
 		setup(github);
 		const binary = installed("0.1.0");
 		await expect(runUpdate(options(github, binary))).rejects.toThrow(message);
@@ -150,8 +112,8 @@ describe.skipIf(process.platform === "win32")("self-update", () => {
 	});
 
 	it.skipIf(process.getuid?.() === 0)("explains a directory it cannot write to", async () => {
-		const github = await fakeGitHub();
-		publish(github, "v0.2.0", releaseArchive("0.2.0"));
+		const github = await startGitHub();
+		release(github, "v0.2.0", archiveReporting("0.2.0"));
 		const binary = installed("0.1.0");
 		chmodSync(join(binary, ".."), 0o555);
 		try {
@@ -162,8 +124,8 @@ describe.skipIf(process.platform === "win32")("self-update", () => {
 	});
 
 	it("maps outcomes to exit codes on the command line", async () => {
-		const github = await fakeGitHub();
-		publish(github, "v0.2.0", releaseArchive("0.2.0"));
+		const github = await startGitHub();
+		release(github, "v0.2.0", archiveReporting("0.2.0"));
 		const binary = installed("0.1.0");
 		const context = { version: "0.1.0", buildTarget: TARGET, executable: binary };
 		const env = { SHIPSHAPE_RELEASES_URL: github.url };
