@@ -12,7 +12,12 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { assetName, binaryName, parseVersion } from "../src/update.js";
 
-/** Release targets and the Bun runtime each uses. x64 uses Bun's baseline build, which runs on CPUs without AVX2. */
+/**
+ * Release targets and the Bun runtime each uses when cross-compiling. x64 uses Bun's baseline
+ * build, which runs on CPUs without AVX2. A build for this machine's own target compiles with
+ * the running Bun instead, with no runtime download; release CI installs the baseline Bun on
+ * x64 runners so native builds are baseline too.
+ */
 const BUN_TARGETS: Record<string, string> = {
 	"linux-x64": "bun-linux-x64-baseline",
 	"linux-arm64": "bun-linux-arm64",
@@ -24,7 +29,8 @@ const root = resolve(import.meta.dirname, "..");
 const { values } = parseArgs({
 	options: { target: { type: "string" }, version: { type: "string" }, out: { type: "string" } },
 });
-const target = values.target ?? `${platform() === "win32" ? "windows" : platform()}-${arch()}`;
+const hostTarget = `${platform() === "win32" ? "windows" : platform()}-${arch()}`;
+const target = values.target ?? hostTarget;
 const bunTarget = BUN_TARGETS[target];
 if (!bunTarget) fail(`Unknown target "${target}". Targets: ${Object.keys(BUN_TARGETS).join(", ")}`);
 const version = (values.version ?? JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version).replace(/^v/, "");
@@ -39,7 +45,7 @@ try {
 		"build",
 		"--compile",
 		"--no-compile-autoload-bunfig",
-		`--target=${bunTarget}`,
+		...(target === hostTarget ? [] : [`--target=${bunTarget}`]),
 		"--define",
 		`SHIPSHAPE_BUILD_VERSION=${JSON.stringify(version)}`,
 		"--define",
@@ -51,7 +57,7 @@ try {
 	copyFileSync(join(root, "LICENSE"), join(stage, "LICENSE"));
 
 	// A binary for this machine must report exactly the version it was built as.
-	if (target === `${platform() === "win32" ? "windows" : platform()}-${arch()}`) {
+	if (target === hostTarget) {
 		const reported = execFileSync(binary, ["--version"], { encoding: "utf8" }).trim();
 		if (reported !== version) fail(`Built binary reports "${reported}", expected "${version}".`);
 	}

@@ -56,10 +56,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - { target: linux-x64, runner: ubuntu-latest }
-          - { target: linux-arm64, runner: ubuntu-24.04-arm }
-          - { target: darwin-arm64, runner: macos-latest }
-          - { target: windows-x64, runner: windows-latest }
+          # Each build compiles with the Bun it runs, so x64 installs Bun's baseline build
+          # (no AVX2 requirement) and no runtime is downloaded during compilation.
+          - { target: linux-x64, runner: ubuntu-latest, bun: bun-linux-x64-baseline }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm, bun: bun-linux-aarch64 }
+          - { target: darwin-arm64, runner: macos-latest, bun: bun-darwin-aarch64 }
+          - { target: windows-x64, runner: windows-latest, bun: bun-windows-x64-baseline }
     runs-on: ${{ matrix.runner }}
     env:
       TARGET: ${{ matrix.target }}
@@ -76,7 +78,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v${{ env.BUN_VERSION }}/${{ matrix.bun }}.zip
       - run: npm ci
       # The build script also checks that the binary reports $VERSION.
       - run: bun scripts/build-binary.ts --target "$TARGET" --version "$VERSION" --out release
