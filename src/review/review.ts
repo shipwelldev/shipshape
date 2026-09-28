@@ -117,6 +117,9 @@ export async function review(request: ReviewRequest): Promise<ReviewResponse> {
 		model = { provider: selector.provider, id: selector.id, thinking: config.thinking };
 		const focus = await readFocus(config.review.focus_file);
 
+		// Model and credentials are validated before the target is resolved, even though an empty
+		// target needs no model: a CI gate with a missing or expired credential must fail rather
+		// than pass on an empty diff.
 		const runtime = await (request.createModelRuntime ?? createModelRuntime)({
 			authFile: config.auth_file,
 			modelsFile: modelsFilePath(globalConfigDir(request.env)),

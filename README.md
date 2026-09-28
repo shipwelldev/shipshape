@@ -133,6 +133,8 @@ npm link            # puts `shipshape` on your PATH; or run: node dist/cli/main.
 | `shipshape review --all` | The entire codebase. Also works on a directory outside Git, honoring its `.gitignore` files |
 
 An empty target produces `no_changes` (exit 0); it never falls back to a full-codebase review.
+The model and credentials are checked first, even when there turns out to be nothing to review,
+so a misconfigured CI gate fails (exit 2) instead of passing on an empty diff.
 `-C DIR` reviews the repository at `DIR`. Snapshots are made with a temporary index, so your
 index and working tree are never modified.
 
