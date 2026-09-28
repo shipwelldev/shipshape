@@ -291,6 +291,7 @@ async function loginCommand(command: Extract<Command, { name: "login" }>, ctx: C
 				ctx.stderr,
 				"Provider",
 				loginable.map((p) => ({ id: p.id, label: p.id })),
+				ctx.signal,
 			));
 		const provider = runtime.getProvider(providerId);
 		if (!provider) {
@@ -306,12 +307,13 @@ async function loginCommand(command: Extract<Command, { name: "login" }>, ctx: C
 			);
 			return 2;
 		}
-		const method = methods.length === 1 ? methods[0]!.id : ((await choose(prompter, ctx.stderr, "Method", methods)) as "oauth" | "api_key");
+		const method =
+			methods.length === 1 ? methods[0]!.id : ((await choose(prompter, ctx.stderr, "Method", methods, ctx.signal)) as "oauth" | "api_key");
 		await runtime.login(providerId, method, authInteraction(prompter, ctx));
 		ctx.stderr.write(`Saved ${method === "oauth" ? "OAuth" : "API key"} credentials for ${providerId} to ${authFile}\n`);
 		return 0;
 	} catch (error) {
-		if (ctx.signal.aborted) return ctx.cancelSignal() === "SIGTERM" ? 143 : 130;
+		if (ctx.signal.aborted) return cancelledExit(ctx);
 		ctx.stderr.write(`shipshape: login failed: ${(error as Error).message}\n`);
 		return 2;
 	} finally {
@@ -340,7 +342,11 @@ async function logoutCommand(command: Extract<Command, { name: "logout" }>, ctx:
 		}
 		const prompter = ctx.createPrompter();
 		try {
-			providerId = await choose(prompter, ctx.stderr, "Provider", stored.map((id) => ({ id, label: id })));
+			providerId = await choose(prompter, ctx.stderr, "Provider", stored.map((id) => ({ id, label: id })), ctx.signal);
+		} catch (error) {
+			if (ctx.signal.aborted) return cancelledExit(ctx);
+			ctx.stderr.write(`shipshape: logout failed: ${(error as Error).message}\n`);
+			return 2;
 		} finally {
 			prompter.close();
 		}
@@ -403,12 +409,12 @@ function authInteraction(prompter: Prompter, ctx: CliContext): AuthInteraction {
 		prompt: (prompt: AuthPrompt) => {
 			switch (prompt.type) {
 				case "select":
-					return choose(prompter, ctx.stderr, prompt.message, prompt.options, prompt.signal);
+					return choose(prompter, ctx.stderr, prompt.message, prompt.options, withCancel(ctx, prompt.signal));
 				case "secret":
-					return prompter.ask(prompt.message, { secret: true, signal: prompt.signal });
+					return prompter.ask(prompt.message, { secret: true, signal: withCancel(ctx, prompt.signal) });
 				default:
 					return prompter.ask(prompt.placeholder ? `${prompt.message} (${prompt.placeholder})` : prompt.message, {
-						signal: prompt.signal,
+						signal: withCancel(ctx, prompt.signal),
 					});
 			}
 		},
@@ -429,6 +435,15 @@ function authInteraction(prompter: Prompter, ctx: CliContext): AuthInteraction {
 			}
 		},
 	};
+}
+
+/** A prompt must stop when the command is cancelled (SIGINT/SIGTERM) as well as on its own signal. */
+function withCancel(ctx: CliContext, signal: AbortSignal | undefined): AbortSignal {
+	return signal ? AbortSignal.any([signal, ctx.signal]) : ctx.signal;
+}
+
+function cancelledExit(ctx: CliContext): number {
+	return ctx.cancelSignal() === "SIGTERM" ? 143 : 130;
 }
 
 async function choose(

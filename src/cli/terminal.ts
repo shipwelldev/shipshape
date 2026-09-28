@@ -22,14 +22,14 @@ export function processContext(): CliContext {
 		stdout: process.stdout,
 		stderr: process.stderr,
 		interactive: Boolean(process.stdin.isTTY && process.stderr.isTTY) && !process.env.CI,
-		createPrompter: () => terminalPrompter(),
+		createPrompter: () => terminalPrompter(controller.signal),
 		signal: controller.signal,
 		cancelSignal: () => received,
 	};
 }
 
-/** Line prompts on stderr; secret answers are not echoed. */
-function terminalPrompter(): Prompter {
+/** Line prompts on stderr; secret answers are not echoed. Every prompt stops when `cancelled` aborts. */
+function terminalPrompter(cancelled: AbortSignal): Prompter {
 	let muted = false;
 	const sink = new Writable({
 		write(chunk, _encoding, callback) {
@@ -48,7 +48,8 @@ function terminalPrompter(): Prompter {
 			process.stderr.write(`${message}: `);
 			muted = options.secret === true;
 			try {
-				return (await rl.question("", options.signal ? { signal: options.signal } : {})).trim();
+				const signal = options.signal ? AbortSignal.any([options.signal, cancelled]) : cancelled;
+				return (await rl.question("", { signal })).trim();
 			} finally {
 				if (muted) process.stderr.write("\n");
 				muted = false;

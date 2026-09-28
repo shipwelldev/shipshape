@@ -42,6 +42,33 @@ describe("login and logout", () => {
 		expect(logout.stderr).toContain(`Removed credentials for openai from ${piAuth}`);
 	});
 
+	it.each([
+		["login while choosing a provider", ["login"], undefined],
+		["logout while choosing a provider", ["logout"], { openai: { type: "api_key", key: "sk-1" }, xai: { type: "api_key", key: "sk-2" } }],
+	])("stops on SIGTERM during %s", { timeout: 5_000 }, async (_case, argv, stored) => {
+		const dir = tempDir();
+		const authFile = join(dir, "auth.json");
+		if (stored) writeFileSync(authFile, JSON.stringify(stored));
+		const controller = new AbortController();
+		// Resolves only through its cancellation signal; a prompt asked without one would hang.
+		const prompter = {
+			ask: (_message: string, options?: { signal?: AbortSignal }) =>
+				new Promise<string>((_resolve, reject) => {
+					options?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+					setTimeout(() => controller.abort(), 10);
+				}),
+			close: () => {},
+		};
+		const run = await cli([...argv, "--auth-file", authFile], {
+			cwd: dir,
+			interactive: true,
+			signal: controller.signal,
+			context: { createPrompter: () => prompter, cancelSignal: () => "SIGTERM" },
+		});
+		expect(run.code).toBe(143);
+		expect(stored ? JSON.parse(readFileSync(authFile, "utf8")) : {}).toEqual(stored ?? {});
+	});
+
 	it("refuses to prompt without a terminal", async () => {
 		const { code, stderr } = await cli(["login", "anthropic"], { cwd: tempDir() });
 		expect(code).toBe(2);
