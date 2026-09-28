@@ -137,6 +137,22 @@ describe("shipshape config set / unset", () => {
 		expect(again.stdout).toContain("review.fail_on is not set in");
 	});
 
+	it("explains that inline tables cannot be edited instead of misreporting or crashing", async () => {
+		const repo = makeRepo({ ".shipshape.toml": `review = { fail_on = "low" }\n` });
+		const { env } = setup();
+		for (const argv of [
+			["config", "unset", "review.fail_on", "--project"],
+			["config", "set", "review.fail_on", "high", "--project"],
+		]) {
+			const run = await cli(argv, { cwd: repo, env });
+			expect(run.code).toBe(2);
+			expect(run.stderr).toContain("review is written as an inline table (review = { ... }), which shipshape config cannot edit");
+		}
+		expect(readFileSync(join(repo, ".shipshape.toml"), "utf8")).toBe(`review = { fail_on = "low" }\n`);
+		// Top-level keys in the same file are still editable.
+		expect((await cli(["config", "set", "model", "a/b", "--project"], { cwd: repo, env })).code).toBe(0);
+	});
+
 	it("refuses to edit a file that is not valid TOML", async () => {
 		const repo = makeRepo({ ".shipshape.toml": `[review\n` });
 		const run = await cli(["config", "set", "review.fail_on", "low", "--project"], { cwd: repo, env: setup().env });

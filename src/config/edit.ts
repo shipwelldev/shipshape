@@ -60,9 +60,21 @@ export async function editSetting(options: EditOptions): Promise<{ changed: bool
 		throw new ConfigError([`${path}: the file is not valid TOML (${firstLine((error as Error).message)}); fix it by hand first.`]);
 	}
 
-	const updated = value === undefined ? unsetKey(original, key) : setKey(original, key, value);
-	if (updated === undefined || updated === original) return { changed: false };
-	if (!sameValue(readKey(updated, key), value)) {
+	let updated: string | undefined;
+	try {
+		updated = value === undefined ? unsetKey(original, key) : setKey(original, key, value);
+	} catch (error) {
+		throw error instanceof ConfigError ? new ConfigError(error.problems.map((problem) => `${path}: ${problem}`)) : error;
+	}
+	if (updated === original) return { changed: false };
+	if (updated === undefined) {
+		// Not found as a line of its own; if the file still sets it, don't claim it is absent.
+		if (readKey(original, key) !== undefined) {
+			throw new ConfigError([`${path}: cannot remove ${key} from the way this file writes it; edit the file by hand.`]);
+		}
+		return { changed: false };
+	}
+	if (!sameValue(readKeySafely(updated, key), value)) {
 		throw new ConfigError([`${path}: cannot update ${key} without restructuring the file; edit it by hand.`]);
 	}
 	const problems: string[] = [];
@@ -154,6 +166,7 @@ function layout(text: string): Layout {
 
 export function setKey(text: string, key: SettingKey, value: unknown): string {
 	const { lines, eol, entries, headers } = layout(text);
+	refuseInlineTable(entries, key);
 	const literal = tomlLiteral(value);
 	const [table, leaf] = splitKey(key);
 	const existing = entries.filter((entry) => entry.name === key);
@@ -193,9 +206,29 @@ export function setKey(text: string, key: SettingKey, value: unknown): string {
 /** Remove a key; undefined when it is not set in this text. */
 export function unsetKey(text: string, key: SettingKey): string | undefined {
 	const { lines, eol, entries } = layout(text);
+	refuseInlineTable(entries, key);
 	const match = entries.find((entry) => entry.name === key);
 	if (!match) return undefined;
 	return joinLines(splice(lines, match.start, match.end - match.start + 1, []), eol);
+}
+
+/** Values inside an inline table (`review = { fail_on = "low" }`) share one line and are not edited. */
+function refuseInlineTable(entries: readonly Entry[], key: SettingKey): void {
+	const [table] = splitKey(key);
+	if (table && entries.some((entry) => entry.name === table)) {
+		throw new ConfigError([
+			`${table} is written as an inline table (${table} = { ... }), which shipshape config cannot edit. Rewrite it as a [${table}] section, or edit the value by hand.`,
+		]);
+	}
+}
+
+/** The value at `key` after an edit, or a marker when the edit produced text that does not parse. */
+function readKeySafely(text: string, key: SettingKey): unknown {
+	try {
+		return readKey(text, key);
+	} catch {
+		return Symbol("unparseable");
+	}
 }
 
 function readKey(text: string, key: SettingKey): unknown {
