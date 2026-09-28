@@ -58,7 +58,8 @@ export type Command =
 	| ConfigEditCommand<"config-set">
 	| ConfigEditCommand<"config-unset">
 	| AuthCommand<"login">
-	| AuthCommand<"logout">;
+	| AuthCommand<"logout">
+	| { name: "update"; checkOnly: boolean };
 
 export interface ConfigEditCommand<Name extends "config-set" | "config-unset"> {
 	name: Name;
@@ -97,6 +98,8 @@ export function parseCommand(argv: readonly string[]): Command {
 		case "login":
 		case "logout":
 			return parseAuth(first, rest);
+		case "update":
+			return parseUpdate(rest);
 		default:
 			throw new UsageError(`Unknown command "${first}". Run "shipshape --help" for usage.`);
 	}
@@ -169,6 +172,12 @@ function parseConfigEdit(sub: "set" | "unset", args: string[]): Command {
 		cwd: values.cwd as string | undefined,
 		config: values.config as string | undefined,
 	};
+}
+
+function parseUpdate(args: string[]): Command {
+	const { values } = parse(args, { ...common, check: { type: "boolean" } });
+	if (values.help) return { name: "help", topic: "update" };
+	return { name: "update", checkOnly: values.check === true };
 }
 
 function parseAuth(name: "login" | "logout", args: string[]): Command {

@@ -18,7 +18,8 @@
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test": "vitest --run",
-		"shipshape": "npm run build --silent && node dist/cli/main.js"
+		"shipshape": "npm run build --silent && node dist/cli/main.js",
+		"build:binary": "bun scripts/build-binary.ts"
 	},
 	"dependencies": {
 		"@earendil-works/pi-ai": "0.87.1",

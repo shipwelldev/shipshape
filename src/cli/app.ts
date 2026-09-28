@@ -18,7 +18,8 @@ import { review, type ReviewProgress } from "../review/review.js";
 import { createModelRuntime, type ModelRuntimeFactory, modelsFilePath } from "../runtime/pi.js";
 import { GitError } from "../target/git.js";
 import { locateProject, TargetError } from "../target/resolve.js";
-import { VERSION } from "../version.js";
+import { DEFAULT_RELEASES_URL, runUpdate, UpdateError } from "../update.js";
+import { BUILD_TARGET, VERSION } from "../version.js";
 import { type Command, type ConfigEditCommand, parseCommand, UsageError } from "./args.js";
 import { helpText } from "./help.js";
 
@@ -43,6 +44,10 @@ export interface CliContext {
 	signal: AbortSignal;
 	cancelSignal(): CancelSignal | undefined;
 	createModelRuntime?: ModelRuntimeFactory;
+	/** Test overrides for the self-update identity; an explicit undefined buildTarget means "running from source". */
+	version?: string;
+	buildTarget?: string;
+	executable?: string;
 }
 
 export async function runCli(argv: readonly string[], ctx: CliContext): Promise<number> {
@@ -72,6 +77,8 @@ export async function runCli(argv: readonly string[], ctx: CliContext): Promise<
 			return loginCommand(command, ctx);
 		case "logout":
 			return logoutCommand(command, ctx);
+		case "update":
+			return updateCommand(command, ctx);
 	}
 }
 
@@ -347,6 +354,37 @@ async function logoutCommand(command: Extract<Command, { name: "logout" }>, ctx:
 	return 0;
 }
 
+async function updateCommand(command: Extract<Command, { name: "update" }>, ctx: CliContext): Promise<number> {
+	try {
+		const outcome = await runUpdate({
+			checkOnly: command.checkOnly,
+			currentVersion: ctx.version ?? VERSION,
+			target: "buildTarget" in ctx ? ctx.buildTarget : BUILD_TARGET,
+			executable: ctx.executable ?? process.execPath,
+			releasesUrl: ctx.env.SHIPSHAPE_RELEASES_URL || DEFAULT_RELEASES_URL,
+			log: (line) => ctx.stderr.write(`${line}\n`),
+		});
+		switch (outcome.status) {
+			case "up_to_date": {
+				// Up to date with a different version means this build is newer than the latest release.
+				const ahead = outcome.current !== outcome.latest ? ` (newer than the latest release, ${outcome.latest})` : "";
+				ctx.stdout.write(`shipshape ${outcome.current} is up to date${ahead}.\n`);
+				return 0;
+			}
+			case "available":
+				ctx.stdout.write(`shipshape ${outcome.latest} is available (installed: ${outcome.current}). Run "shipshape update" to install it.\n`);
+				return 1;
+			case "updated":
+				ctx.stdout.write(`Updated shipshape ${outcome.current} -> ${outcome.latest} at ${outcome.path}\n`);
+				return 0;
+		}
+	} catch (error) {
+		if (!(error instanceof UpdateError)) throw error;
+		ctx.stderr.write(`shipshape: update failed: ${error.message}\n`);
+		return 2;
+	}
+}
+
 /** auth_file comes only from the CLI or global config; project files are never consulted. */
 async function resolveAuthFile(settings: CliSettings, ctx: CliContext): Promise<string | undefined> {
 	try {
@@ -400,7 +438,7 @@ async function choose(
 	options: readonly { id: string; label: string; description?: string }[],
 	signal?: AbortSignal,
 ): Promise<string> {
-	out.write(`${message}:\n`);
+	out.write(`${message.replace(/:+\s*$/, "")}:\n`); // Pi's own prompts may already end in a colon
 	options.forEach((option, index) => {
 		out.write(`  ${index + 1}) ${option.label}${option.description ? ` - ${option.description}` : ""}\n`);
 	});

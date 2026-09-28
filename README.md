@@ -180,11 +180,22 @@ Custom OpenAI-, Anthropic-, or Google-compatible endpoints can be added in
     --fail-on high --config /path/to/trusted/shipshape.toml
   ```
 
+## Versions and updates
+
+`shipshape --version` prints the installed version. Release binaries have it built in, taken
+from the release tag.
+
+`shipshape update` replaces a release binary with the latest GitHub release. Before swapping
+the file in place, it verifies the download's SHA-256 checksum and that the new binary runs
+and reports the expected version. `shipshape update --check` only reports: exit 0 means up to
+date, 1 means an update is available, and 2 means an error. A copy run from source cannot
+update itself. `SHIPSHAPE_RELEASES_URL` points both commands at a mirror.
+
 ## What is not in this version
 
 - GitHub Action, job summary, PR annotations, and required-check or merge-queue enforcement.
 - `shipshape doctor`, third-party Pi provider extensions, and shell/test execution during review.
-- Packaged binaries and an npm release. The package is `private` until a publishable name is chosen, since `shipshape` is taken on npm.
+- Published releases and install scripts. Binaries build locally with `npm run build:binary`; there is no npm package.
 
 ## Development
 
@@ -192,7 +203,13 @@ Custom OpenAI-, Anthropic-, or Google-compatible endpoints can be added in
 npm test            # unit and end-to-end tests with a scripted fake model (no network)
 npm run typecheck
 npm run build
+npm run build:binary   # release archive for this machine in release/ (needs Bun)
 ```
+
+`scripts/build-binary.ts` builds `release/shipshape-<target>.tar.gz` (`.zip` on Windows),
+containing the compiled binary and `LICENSE`. Options are `--target linux-x64|linux-arm64|darwin-arm64|windows-x64`
+and `--version X.Y.Z` (default: `package.json`). Binaries start from `src/cli/binary.ts`, which
+loads Pi's own Bun setup so OAuth sign-in and Amazon Bedrock work in a compiled build.
 
 The end-to-end tests drive the real CLI and a real Pi session against Pi's `fauxProvider`.
 They cover pass, fail, threshold, report repair, missing reports, provider errors, timeouts,

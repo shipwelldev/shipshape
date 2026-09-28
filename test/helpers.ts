@@ -105,6 +105,8 @@ export async function cli(
 		signal?: AbortSignal;
 		interactive?: boolean;
 		answers?: string[];
+		/** Extra context fields, e.g. the self-update identity. */
+		context?: Partial<CliContext>;
 	},
 ): Promise<CliRun> {
 	let stdout = "";
@@ -128,6 +130,7 @@ export async function cli(
 		signal: options.signal ?? new AbortController().signal,
 		cancelSignal: () => (options.signal?.aborted ? "SIGINT" : undefined),
 		createModelRuntime: options.factory,
+		...options.context,
 	};
 	const code = await runCli(argv, ctx);
 	let json: ReviewResult = undefined as unknown as ReviewResult;

@@ -7,7 +7,8 @@ Usage:
   shipshape config unset KEY            Remove a value (--global or --project)
   shipshape login [provider]            Store provider credentials
   shipshape logout [provider]           Remove stored provider credentials
-  shipshape --version
+  shipshape update [--check]            Install the latest release binary
+  shipshape --version                   Print the installed version
 
 Run "shipshape <command> --help" for details.`;
 
@@ -78,7 +79,18 @@ const LOGOUT = `Usage: shipshape logout [provider] [--auth-file PATH]
 Remove a provider's stored credentials from the auth file. This does not unset
 environment variables or revoke the credential with the provider.`;
 
-const TOPICS: Record<string, string> = { review: REVIEW, config: CONFIG, login: LOGIN, logout: LOGOUT };
+const UPDATE = `Usage: shipshape update [--check]
+
+Replace this binary with the latest release from GitHub, after verifying the
+download's SHA-256 checksum and that the new binary runs. Only release binaries
+can update themselves; a copy run from source cannot.
+
+  --check               Only report whether a newer release exists
+
+Exit status: 0 up to date or updated, 1 an update is available (--check),
+2 error. SHIPSHAPE_RELEASES_URL overrides the release location (for mirrors).`;
+
+const TOPICS: Record<string, string> = { review: REVIEW, config: CONFIG, login: LOGIN, logout: LOGOUT, update: UPDATE };
 
 export function helpText(topic?: string): string {
 	return `${(topic && TOPICS[topic]) || MAIN}\n`;
