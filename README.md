@@ -8,24 +8,48 @@ shell commands, and CI.
 
 Status: initial version (`0.1.0-dev`). See [What is not in this version](#what-is-not-in-this-version).
 
+## Install
+
+Linux and macOS (Apple silicon):
+
+```sh
+curl -fsSL https://shipshape.shipwell.dev/install | sh
+```
+
+Windows (x64, or Arm through emulation):
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://shipshape.shipwell.dev/install.ps1 | iex"
+```
+
+Both scripts download a standalone binary from the latest GitHub release (no Node.js needed)
+and verify its SHA-256 checksum. They are also attached to every release, at
+`https://github.com/shipwelldev/shipshape/releases/latest/download/install.sh` (or `install.ps1`).
+
+- `install.sh` installs to `~/.local/bin`. If that directory isn't on your PATH, it adds it in
+  your shell's startup file (`.bashrc`, `.bash_profile` on macOS, `.zshrc`, fish `conf.d`, or `.profile`).
+- `install.ps1` installs to `%LOCALAPPDATA%\Programs\shipshape` and adds it to your user PATH.
+
+Both scripts read these variables: `SHIPSHAPE_VERSION` installs a specific version,
+`SHIPSHAPE_INSTALL_DIR` changes the location, `SHIPSHAPE_NO_MODIFY_PATH=1` leaves PATH alone,
+and `SHIPSHAPE_RELEASES_URL` points at a mirror.
+
+Git is needed to review changes; `--all` also works on a plain directory.
+
 ## Quick start
 
-Requires Node.js 22.19 or newer and Git.
+```sh
+export ANTHROPIC_API_KEY=...            # or: shipshape login anthropic
+shipshape config set model anthropic/<model-id> --global
+shipshape review
+```
+
+To run from source instead (Node.js 22.19 or newer):
 
 ```sh
 npm install
 npm run build
 npm link            # puts `shipshape` on your PATH; or run: node dist/cli/main.js
-
-export ANTHROPIC_API_KEY=...            # or: shipshape login anthropic
-shipshape review --model anthropic/<model-id>
-```
-
-Put the model in your global config so you don't have to pass it every time:
-
-```toml
-# ~/.config/shipshape/config.toml
-model = "anthropic/<model-id>"
 ```
 
 ## Review targets
@@ -195,7 +219,7 @@ update itself. `SHIPSHAPE_RELEASES_URL` points both commands at a mirror.
 
 - GitHub Action, job summary, PR annotations, and required-check or merge-queue enforcement.
 - `shipshape doctor`, third-party Pi provider extensions, and shell/test execution during review.
-- Published releases and install scripts. Binaries build locally with `npm run build:binary`; there is no npm package.
+- A Homebrew tap, Scoop, or winget packages, and code signing for macOS and Windows binaries. There is no npm package.
 
 ## Development
 
@@ -217,3 +241,15 @@ cancellation, target changes during a run, staged snapshots, and prompt contents
 The source is organized as `src/cli` (commands), `src/config` (layered settings), `src/target`
 (Git targets and snapshots), `src/runtime` (Pi session setup), `src/review` (prompt, report
 tool, run lifecycle, policy), and `src/report` (text and JSON).
+
+## Releasing
+
+1. Set `version` in `package.json` (for example `0.1.0`) and commit.
+2. Tag the commit and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
+
+`.github/workflows/release.yml` checks that the tag matches `package.json`, runs the typecheck
+and tests, and builds and smoke-tests a binary on each platform's native runner. It then
+publishes the release with the archives, `SHA256SUMS`, and both install scripts, and finally
+installs the published release on every platform to confirm it works. A tag with a suffix
+(`v0.1.0-rc.1`) becomes a GitHub pre-release. The install scripts' default (latest) and
+`shipshape update` skip pre-releases, so a pre-release is a safe rehearsal.
