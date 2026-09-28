@@ -139,7 +139,7 @@ async function stagedTarget(root: string, request: TargetRequest, scratchDir: st
 	// Materialize the index so Pi's tools read staged contents, not unstaged edits.
 	const workspace = join(scratchDir, "workspace");
 	await mkdir(workspace); // checkout-index creates nothing when every file was deleted
-	await git(["checkout-index", "--all", "--force", `--prefix=${workspace}${sep}`], { cwd: root });
+	await checkoutIndex(root, workspace);
 	if ((await hashIndex(root)) !== indexHash) {
 		throw new TargetError("The index changed while preparing the review; try again.");
 	}
@@ -184,7 +184,7 @@ async function branchTarget(root: string, request: TargetRequest, scratchDir: st
 	await mkdir(workspace); // the head commit may have an empty tree
 	const env = { GIT_INDEX_FILE: join(scratchDir, "index") };
 	await git(["read-tree", headCommit], { cwd: root, env });
-	await git(["checkout-index", "--all", "--force", `--prefix=${workspace}${sep}`], { cwd: root, env });
+	await checkoutIndex(root, workspace, env);
 
 	const { files, excluded } = partition(stripBinaryPatches(parsePatch(patch)), request.exclude);
 	return {
@@ -355,6 +355,18 @@ function partition(all: ChangedFile[], patterns: readonly string[]): { files: Ch
 		else files.push(file);
 	}
 	return { files, excluded };
+}
+
+/**
+ * Write every index entry into `workspace`. In a sparse checkout, entries outside the sparse
+ * selection carry the skip-worktree bit and checkout-index would silently leave them out,
+ * including staged changes, so those bits are ignored.
+ */
+async function checkoutIndex(root: string, workspace: string, env?: Record<string, string>): Promise<void> {
+	await git(["checkout-index", "--all", "--force", "--ignore-skip-worktree-bits", `--prefix=${workspace}${sep}`], {
+		cwd: root,
+		...(env ? { env } : {}),
+	});
 }
 
 async function resolveHead(root: string): Promise<string | undefined> {

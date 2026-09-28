@@ -91,6 +91,26 @@ describe("staged target", () => {
 		expect(existsSync(workspace)).toBe(false);
 	});
 
+	it.each(["--no-sparse-index", "--sparse-index"])(
+		"includes files outside a sparse checkout (%s), including staged changes there",
+		async (indexMode) => {
+			const repo = makeRepo({ "inside/a.txt": "a\n", "outside/b.txt": "b\n", "outside/c.txt": "c\n" });
+			git(repo, "sparse-checkout", "set", "--cone", indexMode, "inside");
+			// Stage a change outside the cone the supported way, then let Git re-apply the sparse rules.
+			git(repo, "sparse-checkout", "add", "outside");
+			writeFiles(repo, { "outside/b.txt": "b staged\n" });
+			git(repo, "add", "outside/b.txt");
+			git(repo, "sparse-checkout", "set", "inside");
+			expect(git(repo, "ls-files", "-t")).toContain("S outside/b.txt");
+
+			const t = await target(repo, { kind: "staged" });
+			expect(t.files.map((f) => f.path)).toEqual(["outside/b.txt"]);
+			expect(readFileSync(join(t.workspace, "outside/b.txt"), "utf8")).toBe("b staged\n");
+			expect(readFileSync(join(t.workspace, "outside/c.txt"), "utf8")).toBe("c\n");
+			expect(existsSync(join(repo, "outside"))).toBe(false);
+		},
+	);
+
 	it("is empty when nothing is staged", async () => {
 		const repo = makeRepo();
 		writeFiles(repo, { "README.md": "unstaged edit\n" });
