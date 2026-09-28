@@ -96,6 +96,7 @@ describe.skipIf(process.platform === "win32")("self-update", () => {
 
 	it.each([
 		["a checksum mismatch", (github: FakeGitHub) => release(github, "v0.2.0", archiveReporting("0.2.0"), Buffer.from("tampered")), /Checksum mismatch/],
+		["a binary that fails after printing the right version", (github: FakeGitHub) => release(github, "v0.2.0", releaseArchive(ASSET, "0.2.0", "echo 0.2.0; exit 3")), /exited with code 3 during its version check/],
 		["a binary reporting the wrong version", (github: FakeGitHub) => release(github, "v0.2.0", archiveReporting("0.1.9")), /reports version "0.1.9", expected "0.2.0"/],
 		["no asset for this platform", (github: FakeGitHub) => {
 			release(github, "v0.2.0", archiveReporting("0.2.0"));

@@ -241,7 +241,13 @@ function capture(command: string, args: string[]): Promise<string> {
 		let stdout = "";
 		child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
 		child.on("error", (error) => reject(new UpdateError(`The downloaded binary does not run here: ${error.message}`)));
-		child.on("close", () => resolve(stdout));
+		child.on("close", (code, signal) => {
+			if (code === 0) resolve(stdout);
+			else {
+				const how = signal ? `was killed by ${signal}` : `exited with code ${code}`;
+				reject(new UpdateError(`The downloaded binary ${how} during its version check; nothing was changed.`));
+			}
+		});
 	});
 }
 
