@@ -46,15 +46,31 @@ function Install-Shipshape {
         Expand-Archive -Path $zip -DestinationPath $extracted
         $new = Join-Path $extracted 'shipshape.exe'
         if (-not (Test-Path $new)) { throw "$asset does not contain shipshape.exe." }
+        # A native program's failure is not a PowerShell error, so check its exit code and output
+        # before anything already installed is touched.
         $version = (& $new --version | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "The downloaded binary does not run on this system (exit code $LASTEXITCODE); nothing was installed." }
+        if ($version -notmatch '^\d+\.\d+\.\d+') { throw 'The downloaded binary did not report a version; nothing was installed.' }
         if ($want -and $version -ne $want) { throw "The downloaded binary reports $version, expected $want." }
 
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
         $exe = Join-Path $dir 'shipshape.exe'
+        # Copy the new binary next to the old one first, so the swap below is two renames within one
+        # folder. A failed copy leaves the existing install untouched.
+        $staged = "$exe.new"
+        Copy-Item -Force $new $staged
         # A running shipshape.exe cannot be overwritten, but it can be renamed out of the way.
         Remove-Item -Force "$exe.old" -ErrorAction SilentlyContinue
-        if (Test-Path $exe) { Move-Item -Force $exe "$exe.old" }
-        Move-Item $new $exe
+        $hadOld = Test-Path $exe
+        if ($hadOld) { Move-Item -Force $exe "$exe.old" }
+        try {
+            Move-Item -Force $staged $exe
+        }
+        catch {
+            if ($hadOld) { Move-Item -Force "$exe.old" $exe }
+            Remove-Item -Force $staged -ErrorAction SilentlyContinue
+            throw
+        }
         Copy-Item -Force (Join-Path $extracted 'LICENSE') (Join-Path $dir 'LICENSE')
         Remove-Item -Force "$exe.old" -ErrorAction SilentlyContinue
         Write-Host "shipshape: Installed shipshape $version to $exe"

@@ -42,16 +42,22 @@ main() {
 	tar -xzf "$tmp/$asset" -C "$tmp"
 	[ -f "$tmp/shipshape" ] || fail "$asset does not contain shipshape."
 	chmod 755 "$tmp/shipshape"
-	version=$("$tmp/shipshape" --version) || fail "The downloaded binary does not run on this system."
+	version=$("$tmp/shipshape" --version) || fail "The downloaded binary does not run on this system; nothing was installed."
+	case "$version" in
+		[0-9]*.[0-9]*.[0-9]*) ;;
+		*) fail "The downloaded binary did not report a version; nothing was installed." ;;
+	esac
 	if [ -n "$want" ] && [ "$version" != "$want" ]; then
 		fail "The downloaded binary reports $version, expected $want."
 	fi
 
 	# Stage beside the destination, then rename, so a running shipshape is never overwritten mid-file.
-	mkdir -p "$install_dir"
-	cp "$tmp/shipshape" "$install_dir/.shipshape.install.$$"
-	chmod 755 "$install_dir/.shipshape.install.$$"
-	mv -f "$install_dir/.shipshape.install.$$" "$install_dir/shipshape"
+	staged="$install_dir/.shipshape.install.$$"
+	mkdir -p "$install_dir" || fail "Could not create $install_dir."
+	if ! { cp "$tmp/shipshape" "$staged" && chmod 755 "$staged" && mv -f "$staged" "$install_dir/shipshape"; }; then
+		rm -f "$staged"
+		fail "Could not write to $install_dir; the existing install, if any, was not changed."
+	fi
 	say "Installed shipshape $version to $install_dir/shipshape"
 
 	ensure_on_path "$install_dir"
