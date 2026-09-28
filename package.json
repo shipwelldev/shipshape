@@ -1,6 +1,6 @@
 {
 	"name": "shipshape",
-	"version": "0.1.0-rc.2",
+	"version": "0.1.0",
 	"private": true,
 	"description": "One-shot code review CLI built on the Pi coding-agent SDK",
 	"license": "MIT",
