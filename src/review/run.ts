@@ -70,6 +70,12 @@ export async function runReviewSession(options: SessionRunOptions): Promise<Sess
 		systemPrompt: options.systemPrompt,
 		customTools: [tool],
 	});
+	// Cancelled while the session was starting: that abort event has already fired, so the
+	// listener registered below would never see it. Stop before any model request.
+	if (options.signal.aborted) {
+		session.dispose();
+		return { cancelled: true, filesRead: [] };
+	}
 
 	const reads = new ReadTracker(options.target.workspace);
 	const unsubscribe = session.subscribe((event) => {
