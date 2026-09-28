@@ -16,25 +16,95 @@ Linux and macOS (Apple silicon):
 curl -fsSL https://shipshape.shipwell.dev/install | sh
 ```
 
-Windows (x64, or Arm through emulation):
+Windows (x64, or Arm through emulation), from PowerShell or Command Prompt:
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://shipshape.shipwell.dev/install.ps1 | iex"
 ```
 
-Both scripts download a standalone binary from the latest GitHub release (no Node.js needed)
-and verify its SHA-256 checksum. They are also attached to every release, at
-`https://github.com/shipwelldev/shipshape/releases/latest/download/install.sh` (or `install.ps1`).
+Then check it:
+
+```sh
+shipshape --version
+```
+
+Both scripts download a standalone binary from the latest GitHub release (no Node.js needed),
+verify its SHA-256 checksum, and check that it runs before installing it.
 
 - `install.sh` installs to `~/.local/bin`. If that directory isn't on your PATH, it adds it in
-  your shell's startup file (`.bashrc`, `.bash_profile` on macOS, `.zshrc`, fish `conf.d`, or `.profile`).
-- `install.ps1` installs to `%LOCALAPPDATA%\Programs\shipshape` and adds it to your user PATH.
-
-Both scripts read these variables: `SHIPSHAPE_VERSION` installs a specific version,
-`SHIPSHAPE_INSTALL_DIR` changes the location, `SHIPSHAPE_NO_MODIFY_PATH=1` leaves PATH alone,
-and `SHIPSHAPE_RELEASES_URL` points at a mirror.
+  your shell's startup file (`.bashrc`, `.bash_profile` on macOS, `.zshrc`, fish `conf.d`, or `.profile`),
+  so open a new terminal afterwards.
+- `install.ps1` installs to `%LOCALAPPDATA%\Programs\shipshape` and adds it to your user PATH,
+  so open a new terminal afterwards.
 
 Git is needed to review changes; `--all` also works on a plain directory.
+
+### Install options
+
+The scripts read these environment variables:
+
+| Variable | Effect |
+| --- | --- |
+| `SHIPSHAPE_VERSION` | Install a specific version, such as `0.1.0` (default: the latest release) |
+| `SHIPSHAPE_INSTALL_DIR` | Install somewhere else |
+| `SHIPSHAPE_NO_MODIFY_PATH=1` | Don't change PATH or shell startup files |
+| `SHIPSHAPE_RELEASES_URL` | Download from a mirror instead of GitHub releases |
+
+With `curl`, put the variable on `sh`, the command that runs the script:
+
+```sh
+curl -fsSL https://shipshape.shipwell.dev/install | SHIPSHAPE_VERSION=0.1.0 sh
+curl -fsSL https://shipshape.shipwell.dev/install | sudo env SHIPSHAPE_INSTALL_DIR=/usr/local/bin sh
+```
+
+In PowerShell, set it first:
+
+```powershell
+$env:SHIPSHAPE_VERSION = "0.1.0"
+powershell -ExecutionPolicy ByPass -c "irm https://shipshape.shipwell.dev/install.ps1 | iex"
+```
+
+Every release also carries its own copies of the scripts. The links above always serve the
+latest release's scripts, and pre-releases are never "latest", so install a pre-release with
+the script from its tag:
+
+```sh
+curl -fsSL https://github.com/shipwelldev/shipshape/releases/download/v<version>/install.sh | SHIPSHAPE_VERSION=<version> sh
+```
+
+### Upgrade
+
+```sh
+shipshape update          # install the latest release in place
+shipshape update --check  # only report whether a newer release exists
+```
+
+`shipshape update` downloads the latest GitHub release for your platform. It verifies the
+download's SHA-256 checksum and that the new binary runs and reports the expected version, and
+only then replaces the installed binary. If it fails, the installed version is left as it was.
+`--check` exits 0 when up to date, 1 when an update is available, and 2 on error, so scripts
+can use it. If the binary is in a directory you can't write to (for example after a `sudo`
+install), run `sudo shipshape update`.
+
+Running the install script again also upgrades, and with `SHIPSHAPE_VERSION` it installs any
+specific version, including an older one. A copy run from source cannot update itself.
+
+### Uninstall
+
+Linux and macOS: delete `~/.local/bin/shipshape` and the lines marked
+`# Added by the Ship Shape installer` in your shell startup file.
+
+Windows: delete `%LOCALAPPDATA%\Programs\shipshape` and remove that folder from your user
+`Path` (search the Start menu for "Edit environment variables for your account").
+
+To remove everything, also delete the configuration and stored credentials, and the cache
+(which holds any search tools downloaded for reviews):
+
+| | Configuration | Cache |
+| --- | --- | --- |
+| Linux | `~/.config/shipshape` | `~/.cache/shipshape` |
+| macOS | `~/Library/Application Support/shipshape` | `~/Library/Caches/shipshape` |
+| Windows | `%APPDATA%\shipshape` | `%LOCALAPPDATA%\shipshape` |
 
 ## Quick start
 
@@ -203,17 +273,6 @@ Custom OpenAI-, Anthropic-, or Google-compatible endpoints can be added in
   shipshape review --base "$BASE_SHA" --head "$HEAD_SHA" --format json --non-interactive \
     --fail-on high --config /path/to/trusted/shipshape.toml
   ```
-
-## Versions and updates
-
-`shipshape --version` prints the installed version. Release binaries have it built in, taken
-from the release tag.
-
-`shipshape update` replaces a release binary with the latest GitHub release. Before swapping
-the file in place, it verifies the download's SHA-256 checksum and that the new binary runs
-and reports the expected version. `shipshape update --check` only reports: exit 0 means up to
-date, 1 means an update is available, and 2 means an error. A copy run from source cannot
-update itself. `SHIPSHAPE_RELEASES_URL` points both commands at a mirror.
 
 ## What is not in this version
 
