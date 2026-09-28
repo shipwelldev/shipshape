@@ -6,7 +6,7 @@ structured report, validates every finding's location, applies your failure poli
 with a verdict. It is built for three callers: people in a terminal, coding agents running
 shell commands, and CI.
 
-Status: initial version (`0.1.0-dev`). See [What is not in this version](#what-is-not-in-this-version).
+Status: pre-release. See [What is not in this version](#what-is-not-in-this-version).
 
 ## Install
 
