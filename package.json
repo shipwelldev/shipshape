@@ -6,7 +6,7 @@
 	"license": "MIT",
 	"type": "module",
 	"bin": {
-		"shipshape": "dist/cli/main.js"
+		"shipshape-dev": "dist/cli/main.js"
 	},
 	"files": [
 		"dist"

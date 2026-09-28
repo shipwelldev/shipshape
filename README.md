@@ -119,8 +119,11 @@ To run from source instead (Node.js 22.19 or newer):
 ```sh
 npm install
 npm run build
-npm link            # puts `shipshape` on your PATH; or run: node dist/cli/main.js
+npm link            # puts `shipshape-dev` on your PATH; or run: node dist/cli/main.js
 ```
+
+The source checkout links as `shipshape-dev`, so it can sit alongside an installed release
+(`shipshape`). Both use the same configuration and credentials.
 
 ## Review targets
 
