@@ -41,14 +41,16 @@ export function renderText(result: ReviewResult, style: Styler = plain): string 
 	if (result.model) {
 		out.push(`${style("dim", "Model:")}  ${result.model.provider}/${result.model.id} (thinking: ${result.model.thinking})`);
 	}
+	if (result.council) out.push(...councilLines(result.council, style));
 
 	if (result.findings.length > 0) {
 		const partial = result.status === "incomplete" || result.status === "cancelled";
 		out.push("", style("bold", partial ? "Partial findings (the review did not complete)" : "Findings"));
 		// Findings arrive sorted with IDs F1..Fn, so item N is finding FN in the JSON output.
 		const width = `${result.findings.length}.`.length;
+		const reviewers = result.council?.reviewers.length;
 		for (const [index, finding] of result.findings.entries()) {
-			out.push("", ...renderFinding(finding, `${index + 1}.`.padStart(width), style));
+			out.push("", ...renderFinding(finding, `${index + 1}.`.padStart(width), style, reviewers));
 		}
 	}
 
@@ -81,7 +83,24 @@ function headline(result: ReviewResult): string {
 	}
 }
 
-function renderFinding(finding: Finding, number: string, style: Styler): string[] {
+function councilLines(council: NonNullable<ReviewResult["council"]>, style: Styler): string[] {
+	const { reviewers, collator } = council;
+	const completed = reviewers.filter((reviewer) => reviewer.status === "completed").length;
+	const thinking = new Set([...reviewers, collator].map((member) => member.thinking));
+	const quorum = council.min_reviewers < reviewers.length ? `, ${council.min_reviewers} required` : "";
+	const collated: Record<typeof collator.status, string> = {
+		completed: plural(collator.merges, "duplicate group") + " merged",
+		failed: "failed; findings are unmerged",
+		cancelled: "cancelled",
+		skipped: "not needed",
+	};
+	return [
+		`${style("dim", "Council:")} ${reviewers.map((reviewer) => reviewer.label).join(", ")} (${completed} of ${reviewers.length} completed${quorum}${thinking.size === 1 ? `; thinking: ${[...thinking][0]}` : ""})`,
+		`${style("dim", "Collator:")} ${collator.label} (${collated[collator.status]})`,
+	];
+}
+
+function renderFinding(finding: Finding, number: string, style: Styler, reviewers?: number): string[] {
 	const lines =
 		finding.line_start === undefined
 			? ""
@@ -99,6 +118,7 @@ function renderFinding(finding: Finding, number: string, style: Styler): string[
 	const field = (name: string, value: string | undefined) => {
 		if (value) out.push(`${pad}${style("dim", `${name}:`)} ${value.replace(/\n/g, `\n${pad}  `)}`);
 	};
+	if (finding.reported_by) field("Reported by", `${finding.reported_by.join(", ")} (${finding.reported_by.length} of ${reviewers})`);
 	field("Trigger", finding.trigger);
 	field("Impact", finding.impact);
 	field("Evidence", finding.evidence);
