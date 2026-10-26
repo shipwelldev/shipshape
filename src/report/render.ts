@@ -45,7 +45,11 @@ export function renderText(result: ReviewResult, style: Styler = plain): string 
 	if (result.findings.length > 0) {
 		const partial = result.status === "incomplete" || result.status === "cancelled";
 		out.push("", style("bold", partial ? "Partial findings (the review did not complete)" : "Findings"));
-		for (const finding of result.findings) out.push("", ...renderFinding(finding, style));
+		// Findings arrive sorted with IDs F1..Fn, so item N is finding FN in the JSON output.
+		const width = `${result.findings.length}.`.length;
+		for (const [index, finding] of result.findings.entries()) {
+			out.push("", ...renderFinding(finding, `${index + 1}.`.padStart(width), style));
+		}
 	}
 
 	if (result.summary) out.push("", style("bold", "Summary"), indent(result.summary));
@@ -77,7 +81,7 @@ function headline(result: ReviewResult): string {
 	}
 }
 
-function renderFinding(finding: Finding, style: Styler): string[] {
+function renderFinding(finding: Finding, number: string, style: Styler): string[] {
 	const lines =
 		finding.line_start === undefined
 			? ""
@@ -86,13 +90,14 @@ function renderFinding(finding: Finding, style: Styler): string[] {
 				: `:${finding.line_start}`;
 	const where = `${finding.path}${lines}${finding.side === "old" ? " (base version)" : ""}`;
 	const tags = [finding.category, finding.blocking ? "blocking" : undefined].filter(Boolean).join(", ");
+	const pad = " ".repeat(number.length + 1);
 	const out = [
-		`${style(SEVERITY_STYLE[finding.severity], finding.severity.toUpperCase())} ${style("bold", finding.title)}`,
-		`  ${style("underline", where)}  ${style("dim", `[${finding.id}; ${tags}]`)}`,
-		indent(finding.description),
+		`${number} ${style(SEVERITY_STYLE[finding.severity], finding.severity.toUpperCase())}  ${style("underline", where)}`,
+		`${pad}${style("bold", finding.title)}  ${style("dim", `[${tags}]`)}`,
+		indent(finding.description, pad),
 	];
 	const field = (name: string, value: string | undefined) => {
-		if (value) out.push(`  ${style("dim", `${name}:`)} ${value.replace(/\n/g, "\n    ")}`);
+		if (value) out.push(`${pad}${style("dim", `${name}:`)} ${value.replace(/\n/g, `\n${pad}  `)}`);
 	};
 	field("Trigger", finding.trigger);
 	field("Impact", finding.impact);
@@ -113,10 +118,10 @@ function usageLine(result: ReviewResult): string | undefined {
 	return parts.join(" · ");
 }
 
-function indent(text: string): string {
+function indent(text: string, prefix = "  "): string {
 	return text
 		.split("\n")
-		.map((line) => (line ? `  ${line}` : line))
+		.map((line) => (line ? `${prefix}${line}` : line))
 		.join("\n");
 }
 

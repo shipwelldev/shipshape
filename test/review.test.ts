@@ -396,13 +396,15 @@ describe("what the reviewer is given", () => {
 describe("text output", () => {
 	it("renders a readable report with the verdict first", async () => {
 		const repo = changedRepo();
-		const { factory } = fauxRuntime([submit([highBug("src/math.ts", 6)])]);
+		const { factory } = fauxRuntime([
+			submit([highBug("src/math.ts", 1, { severity: "low", title: "Misleading comment" }), highBug("src/math.ts", 6)]),
+		]);
 		const { code, stdout } = await cli(["review", "--model", FAUX_MODEL], { cwd: repo, factory });
 		expect(code).toBe(1);
-		expect(stdout.split("\n")[0]).toMatch(/^FAILED\s+1 blocking finding \(fail_on: high\)/);
-		expect(stdout).toContain("HIGH Division by zero");
-		expect(stdout).toContain("src/math.ts:6");
-		expect(stdout).toContain("Trigger: divide(1, 0)");
+		expect(stdout.split("\n")[0]).toMatch(/^FAILED\s+1 blocking finding \(fail_on: high\), 2 total/);
+		expect(stdout).toContain("1. HIGH  src/math.ts:6\n   Division by zero  [bug, blocking]\n");
+		expect(stdout).toContain("2. LOW  src/math.ts:1\n   Misleading comment  [bug]\n");
+		expect(stdout).toContain("   Trigger: divide(1, 0)");
 		expect(stdout).not.toContain("\u001b[");
 	});
 });
