@@ -110,21 +110,33 @@ async function reviewCommand(command: Extract<Command, { name: "review" }>, ctx:
 }
 
 function describeProgress(event: ReviewProgress, style: Styler): string {
+	// Council members run at the same time, so each line says whose it is.
+	const from = "source" in event && event.source ? `[${event.source}] ` : "";
 	switch (event.type) {
-		case "start":
-			return `${style("bold", "shipshape:")} reviewing ${event.description} · ${event.files} file(s) · ${event.model}\n`;
+		case "start": {
+			const models = event.collator
+				? `council of ${event.models.length}: ${event.models.join(", ")} · collator: ${event.collator}`
+				: event.models[0];
+			return `${style("bold", "shipshape:")} reviewing ${event.description} · ${event.files} file(s) · ${models}\n`;
+		}
 		case "no_changes":
 			return `${style("bold", "shipshape:")} nothing to review in ${event.description}\n`;
 		case "tool":
-			return style("dim", `  ${event.name} ${event.detail}`.trimEnd()) + "\n";
+			return style("dim", `  ${from}${event.name} ${event.detail}`.trimEnd()) + "\n";
 		case "tool_error":
-			return style("dim", `  ${event.name} failed: ${event.message}`) + "\n";
+			return style("dim", `  ${from}${event.name} failed: ${event.message}`) + "\n";
 		case "retry":
-			return style("yellow", `  provider error, retrying (${event.attempt}/${event.maxAttempts}): ${event.message}`) + "\n";
+			return style("yellow", `  ${from}provider error, retrying (${event.attempt}/${event.maxAttempts}): ${event.message}`) + "\n";
 		case "compaction":
-			return style("dim", "  compacting conversation context") + "\n";
+			return style("dim", `  ${from}compacting conversation context`) + "\n";
 		case "repair":
-			return style("yellow", `  ${event.message}`) + "\n";
+			return style("yellow", `  ${from}${event.message}`) + "\n";
+		case "reviewer_done":
+			return style("dim", `  ${from}finished with ${event.findings} finding(s)`) + "\n";
+		case "reviewer_failed":
+			return style("yellow", `  ${from}did not complete: ${event.message}`) + "\n";
+		case "collate":
+			return `${style("bold", "shipshape:")} collating ${event.findings} finding(s) from ${event.reviewers} reviewers · ${event.model}\n`;
 	}
 }
 
@@ -160,12 +172,15 @@ async function configShowCommand(command: Extract<Command, { name: "config-show"
 
 function settingValues(config: ShipshapeConfig): Record<SettingKey, unknown> {
 	return {
-		model: config.model,
+		// A single model is shown the way it is usually written, as a plain string.
+		model: config.model?.length === 1 ? config.model[0] : config.model,
+		collator: config.collator,
 		thinking: config.thinking,
 		format: config.format,
 		auth_file: config.auth_file,
 		"review.fail_on": config.review.fail_on,
 		"review.timeout_seconds": config.review.timeout_seconds,
+		"review.min_reviewers": config.review.min_reviewers,
 		"review.exclude": config.review.exclude,
 		"review.instructions": config.review.instructions,
 		"review.focus_file": config.review.focus_file,
@@ -177,6 +192,7 @@ function formatConfig(config: ShipshapeConfig, sources: Record<SettingKey, Sourc
 	const values = settingValues(config);
 	const unsetNotes: Partial<Record<SettingKey, string>> = {
 		model: "(not set; required for reviews)",
+		collator: "(not set; a council uses its first model)",
 		"review.focus_file": "(built-in focus)",
 	};
 	const rows: Array<[string, string, SettingKey] | [string]> = [];

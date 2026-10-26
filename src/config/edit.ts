@@ -6,9 +6,11 @@ import { type SettingDef, SettingError, type SettingKey, SETTINGS_BY_KEY } from 
 
 /** Convert `config set` arguments into the TOML value for a setting. */
 export function valueFromArgs(def: SettingDef, args: readonly string[]): unknown {
-	if (def.kind === "list") {
-		const [only] = args;
-		if (args.length === 1 && only!.trim().startsWith("[")) {
+	const [only] = args;
+	const literalList = args.length === 1 && only!.trim().startsWith("[");
+	// One value stays a plain string for settings that take either, so `model a/b` writes `model = "a/b"`.
+	if (def.kind === "list" || (def.kind === "string-or-list" && (args.length > 1 || literalList))) {
+		if (literalList) {
 			try {
 				return (parseToml(`value = ${only}`) as { value: unknown }).value;
 			} catch {

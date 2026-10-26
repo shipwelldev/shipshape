@@ -21,11 +21,15 @@ Targets (default: uncommitted changes, staged and unstaged, plus untracked files
   --all                 Review the entire codebase (also works outside Git)
 
 Options:
-  --model PROVIDER/ID   Model to use, e.g. anthropic/<model-id>
+  --model PROVIDER/ID   Model to use, e.g. anthropic/<model-id>. Repeat it to
+                        run a council of reviewers whose reports are merged
+  --collator MODEL      Model that merges a council's reports (default: first)
+  --min-reviewers N     Council reviewers that must complete (default: all)
   --thinking LEVEL      off, minimal, low, medium, high, xhigh, max
   --format FORMAT       text or json (json: machine-readable result on stdout)
   --fail-on SEVERITY    Fail on findings at or above critical, high, medium, low
-  --timeout SECONDS     Whole-review deadline; 0 disables it
+  --timeout SECONDS     Review deadline; 0 disables it. A council's collator
+                        gets the same again
   --exclude GLOB        Exclude paths (repeatable; replaces configured excludes)
   --instructions TEXT   Extra review instructions appended to the built-in ones
   --focus-file PATH     Replace the built-in review focus with this file
@@ -56,10 +60,11 @@ validated before it is written. Removing a key makes it inherit from the next la
   --config PATH         Use this file instead of the project's .shipshape.toml
   -C, --cwd DIR         Resolve the project from DIR
 
-Keys: model, thinking, format, auth_file (global only), review.fail_on,
-review.timeout_seconds, review.exclude, review.instructions, review.focus_file,
-review.standards_files. List settings take several values, or [] for an empty
-list. Paths are written as given and resolve relative to the edited file.
+Keys: model, collator, thinking, format, auth_file (global only), review.fail_on,
+review.timeout_seconds, review.min_reviewers, review.exclude, review.instructions,
+review.focus_file, review.standards_files. List settings take several values, or
+[] for an empty list; several models make a council. Paths are written as given
+and resolve relative to the edited file.
 
 Examples:
   shipshape config set model anthropic/<model-id> --global

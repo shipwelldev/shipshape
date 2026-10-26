@@ -88,6 +88,33 @@ export function fauxRuntime(steps: FauxResponseStep[], options: RegisterFauxProv
 	return { faux, factory };
 }
 
+/**
+ * Several scripted faux providers, each with its own response queue, for council reviews.
+ * Each name becomes a provider with one model: "<name>/reviewer".
+ */
+export function fauxProviders(
+	scripts: Record<string, FauxResponseStep[]>,
+	options: Record<string, RegisterFauxProviderOptions> = {},
+) {
+	const fauxes = Object.fromEntries(
+		Object.entries(scripts).map(([name, steps]) => {
+			const faux = fauxProvider({ provider: name, models: [{ id: "reviewer" }], ...options[name] });
+			faux.setResponses(steps);
+			return [name, faux];
+		}),
+	);
+	const factory: ModelRuntimeFactory = async (runtimeOptions) => {
+		const runtime = await createModelRuntime(runtimeOptions);
+		for (const faux of Object.values(fauxes)) runtime.registerNativeProvider(faux.provider);
+		return runtime;
+	};
+	return { fauxes, factory };
+}
+
+export function collate(merges: unknown[] = [], summary = "Combined review.") {
+	return callTool("submit_collation", { summary, merges });
+}
+
 export interface CliRun {
 	code: number;
 	stdout: string;

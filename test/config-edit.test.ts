@@ -87,8 +87,8 @@ describe("shipshape config set / unset", () => {
 		expect(bad.stderr).toContain(`review.fail_on: expected one of critical, high, medium, low; got "severe"`);
 		const notInt = await cli(["config", "set", "review.timeout_seconds", "soon", "--global"], { cwd: home, env });
 		expect(notInt.stderr).toContain("expected a whole number of seconds");
-		const tooMany = await cli(["config", "set", "model", "a/b", "c/d", "--global"], { cwd: home, env });
-		expect(tooMany.stderr).toContain("model: expected exactly one value; got 2");
+		const tooMany = await cli(["config", "set", "thinking", "high", "low", "--global"], { cwd: home, env });
+		expect(tooMany.stderr).toContain("thinking: expected exactly one value; got 2");
 		expect(readFileSync(globalFile, "utf8")).toBe(`# mine\n[review]\nfail_on = "high"\n`);
 	});
 
