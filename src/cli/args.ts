@@ -11,14 +11,18 @@ interface SettingFlag {
 	convert?: (raw: string) => unknown;
 }
 
+const wholeNumber = (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : raw);
+
 /** Flags that override configuration settings. None has a parser default: absent means inherit. */
 const SETTING_FLAGS: Record<string, SettingFlag> = {
-	model: { key: "model" },
+	model: { key: "model", multiple: true },
+	collator: { key: "collator" },
 	thinking: { key: "thinking" },
 	format: { key: "format" },
 	"auth-file": { key: "auth_file" },
 	"fail-on": { key: "review.fail_on" },
-	timeout: { key: "review.timeout_seconds", convert: (raw) => (/^\d+$/.test(raw) ? Number(raw) : raw) },
+	timeout: { key: "review.timeout_seconds", convert: wholeNumber },
+	"min-reviewers": { key: "review.min_reviewers", convert: wholeNumber },
 	exclude: { key: "review.exclude", multiple: true },
 	instructions: { key: "review.instructions" },
 	"focus-file": { key: "review.focus_file" },

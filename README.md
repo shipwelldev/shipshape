@@ -156,7 +156,7 @@ in the JSON output.
 | `passed` | 0 | Complete review; no finding at or above `fail_on` |
 | `no_changes` | 0 | Nothing in scope to review |
 | `failed` | 1 | Complete review with at least one blocking finding |
-| `incomplete` | 2 | The review ran but did not yield a trustworthy complete result (timeout, provider error, missing or invalid report, target changed) |
+| `incomplete` | 2 | The review ran but did not yield a trustworthy complete result (timeout, provider error, missing or invalid report, target changed, too few council reviewers completed, collation failed) |
 | `error` | 2 | The review could not run (configuration, target, model, or credentials) |
 | `cancelled` | 130 / 143 | Interrupted by SIGINT / SIGTERM; never a pass |
 
@@ -168,9 +168,9 @@ The JSON document (`schema_version: 1`) contains:
 
 - `status`, `exit_code`, and `problem` (`reason` and `message`, present on incomplete, error, and cancelled).
 - `target`: kind, description, identity (base, merge base, and head commits; `content_sha256` for uncommitted content), changed files, and excluded paths.
-- `model`, `policy.fail_on`, and the reviewer's `summary`.
-- `findings`, each with `id`, `severity` (critical, high, medium, low), `category` (bug, security, standards, other), `title`, `description`, `path`, `line_start`/`line_end`, `side` (`new` or `old`), `trigger`, `impact`, `evidence`, `standard`, `suggestion`, `in_diff`, and `blocking`.
-- `counts`; `coverage` (diffs omitted from the prompt, files the reviewer actually read, and limitations); `usage` (tokens, plus cost when reported). Cost is left out for subscription sign-ins, where list prices are not what you pay.
+- `model` for a single-model review, or `council` for a [council review](#council-reviews): each reviewer's and the collator's model, status, `problem`, and usage; reviewer finding counts; the collator's merge count; and `min_reviewers`. Also `policy.fail_on` and the `summary`.
+- `findings`, each with `id`, `severity` (critical, high, medium, low), `category` (bug, security, standards, other), `title`, `description`, `path`, `line_start`/`line_end`, `side` (`new` or `old`), `trigger`, `impact`, `evidence`, `standard`, `suggestion`, `in_diff`, and `blocking`. Council reviews add `reported_by`, the reviewers that reported the finding.
+- `counts`; `coverage` (diffs omitted from the prompt, files the reviewer actually read, and limitations); `usage` (tokens, plus cost when reported). Cost is left out for subscription sign-ins, where list prices are not what you pay. A council's `usage` is the total for all members; its cost is left out if any member uses a subscription sign-in.
 
 ### For coding agents
 
@@ -194,6 +194,43 @@ the report:
 An invalid report is returned to the reviewer with the specific problems, up to two repair
 attempts. After that, the valid findings are kept and the review is `incomplete`. If the
 reviewer stops without submitting, it is asked once more; then the review is `incomplete`.
+
+## Council reviews
+
+List more than one model and Ship Shape runs a council. Each model reviews the same target
+independently and in parallel, then a collator model merges their reports into one.
+
+```toml
+model = ["anthropic/<model-id>", "openai/<model-id>", "google/<model-id>"]
+collator = "anthropic/<model-id>"   # optional; defaults to the first model
+```
+
+```sh
+shipshape review --model anthropic/<model-id> --model openai/<model-id> --collator anthropic/<model-id>
+```
+
+- Every reviewer gets the same instructions, tools, and validation as a single-model review.
+  Models and credentials for every member, including the collator, are checked before the target.
+- The collator only merges. It groups findings that describe the same problem and may combine
+  their wording. It cannot drop a finding or change its severity, and it gets no repository tools.
+  A merged finding takes the highest severity in its group, so the verdict never depends on the
+  collator. Findings it does not group are kept as they are. Its grouping is validated, with the
+  same two repair attempts as a reviewer's report.
+- The collator runs only when two or more reviewers report findings. Otherwise there is nothing
+  to merge, and the summary shows each reviewer's own.
+- `review.min_reviewers` (default `"all"`) sets how many reviewers must complete. With fewer, the
+  review is `incomplete` (`quorum_not_met`). When enough complete, the rest are listed as
+  limitations, and any validated findings they submitted still count. A quorum larger than the
+  number of models is a configuration error.
+- If the collator fails, the review is `incomplete` (`collation_failed`), and every finding is
+  shown unmerged.
+- `review.timeout_seconds` applies to the reviewers, which run together, and then again to the
+  collator, so a council can take up to twice as long.
+- The same model may be listed more than once, as independent samples. Repeats are labeled
+  `provider/model-id#1`, `#2`, and so on.
+- `thinking` applies to every member.
+
+With a single model, `collator` is ignored and the review runs as before.
 
 ## Configuration
 
@@ -225,19 +262,22 @@ shipshape config unset review.fail_on --project   # inherit again
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `model` | none (required) | Provider-qualified model, `provider/model-id` |
+| `model` | none (required) | Provider-qualified model, `provider/model-id`, or a list of them for a [council](#council-reviews) |
+| `collator` | the first model | Model that merges a council's reports |
 | `thinking` | `"medium"` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; clamped to what the model supports |
 | `format` | `"text"` | `text` or `json` |
 | `auth_file` | `<config dir>/shipshape/auth.json` | Credential file. Global config or `--auth-file` only |
 | `review.fail_on` | `"high"` | Findings at or above this severity fail the review |
-| `review.timeout_seconds` | `600` | Whole-review deadline; `0` disables it |
+| `review.timeout_seconds` | `600` | Review deadline; `0` disables it. A council's collator gets the same again |
+| `review.min_reviewers` | `"all"` | Council reviewers that must complete, `"all"` or a number |
 | `review.exclude` | `[]` | Globs matched against repository paths. A pattern without `/` matches file names at any depth; `dir/` matches everything under `dir` |
 | `review.instructions` | `""` | Text appended to the built-in review instructions |
 | `review.focus_file` | built-in | File that **replaces** the built-in "what to look for" section |
 | `review.standards_files` | `["AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md"]` | Repository files injected as documented standards (missing ones are skipped) |
 
-Each setting has a matching flag: `--model`, `--thinking`, `--format`, `--auth-file`, `--fail-on`,
-`--timeout`, `--exclude` (repeatable), `--instructions`, and `--focus-file`.
+Each setting has a matching flag: `--model` (repeatable), `--collator`, `--thinking`, `--format`,
+`--auth-file`, `--fail-on`, `--timeout`, `--min-reviewers`, `--exclude` (repeatable),
+`--instructions`, and `--focus-file`.
 
 ```toml
 # .shipshape.toml
@@ -268,6 +308,7 @@ Custom OpenAI-, Anthropic-, or Google-compatible endpoints can be added in
 
 - The reviewer gets Pi's `read`, `grep`, `find`, and `ls`, plus `submit_review`. No shell, edit, or write tools.
   Tool selection is **not** an OS sandbox: `read` can open any file the process can.
+  A council's collator gets only `submit_collation`; it sees the reviewers' reports, not the repository.
 - Nothing is discovered from disk into the session: no Pi extensions, skills, prompt templates, context files, or Pi settings.
   Pi's state directory is redirected to `<cache dir>/shipshape/pi` (managed `rg`/`fd` downloads, if needed), so `~/.pi` is never read or written implicitly.
 - Repository content, including standards files, is presented to the reviewer as material under review, not as instructions.

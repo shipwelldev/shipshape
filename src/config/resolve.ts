@@ -88,12 +88,14 @@ export function resolveLayers(layers: readonly LayerValues[], defaults: DefaultC
 	const get = <T>(key: SettingKey) => flat.get(key) as T;
 	const config: ShipshapeConfig = {
 		model: get("model"),
+		collator: get("collator"),
 		thinking: get("thinking"),
 		format: get("format"),
 		auth_file: get("auth_file"),
 		review: {
 			fail_on: get("review.fail_on"),
 			timeout_seconds: get("review.timeout_seconds"),
+			min_reviewers: get("review.min_reviewers"),
 			exclude: get("review.exclude"),
 			instructions: get("review.instructions"),
 			focus_file: get("review.focus_file"),

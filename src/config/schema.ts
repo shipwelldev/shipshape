@@ -20,16 +20,20 @@ export interface Source {
 }
 
 export interface ShipshapeConfig {
-	/** Provider-qualified model selector, e.g. "anthropic/<model-id>". No default. */
-	model: string | undefined;
+	/** Provider-qualified model selectors, e.g. "anthropic/<model-id>"; two or more form a council. No default. */
+	model: string[] | undefined;
+	/** Model that reconciles a council's reports; undefined means the first reviewer model. */
+	collator: string | undefined;
 	thinking: ThinkingLevel;
 	format: OutputFormat;
 	/** Absolute path of the credential file (Pi auth.json format). */
 	auth_file: string;
 	review: {
 		fail_on: Severity;
-		/** Whole-review deadline; 0 disables it. */
+		/** Whole-review deadline; 0 disables it. A council's collator gets its own deadline of the same length. */
 		timeout_seconds: number;
+		/** Council reviewers that must complete for a trustworthy result. */
+		min_reviewers: number | "all";
 		exclude: string[];
 		/** Appended to the built-in review instructions; empty means none. */
 		instructions: string;
@@ -42,11 +46,13 @@ export interface ShipshapeConfig {
 
 export type SettingKey =
 	| "model"
+	| "collator"
 	| "thinking"
 	| "format"
 	| "auth_file"
 	| "review.fail_on"
 	| "review.timeout_seconds"
+	| "review.min_reviewers"
 	| "review.exclude"
 	| "review.instructions"
 	| "review.focus_file"
@@ -62,7 +68,7 @@ export interface DefaultContext {
 }
 
 /** How a value is written on the command line (`config set`) and in TOML. */
-export type SettingKind = "string" | "integer" | "list";
+export type SettingKind = "string" | "integer" | "list" | "string-or-list";
 
 export interface SettingDef {
 	key: SettingKey;
@@ -110,16 +116,23 @@ function stringList(raw: unknown, what: string): string[] {
 export const SETTINGS: readonly SettingDef[] = [
 	{
 		key: "model",
+		kind: "string-or-list",
+		layers: ALL_LAYERS,
+		expects: `a provider-qualified model such as "anthropic/<model-id>", or a list of them for a council`,
+		default: () => undefined,
+		parse(raw) {
+			if (!Array.isArray(raw)) return [modelSelector(raw)];
+			if (raw.length === 0) throw new SettingError("expected at least one model; got an empty list");
+			return raw.map(modelSelector);
+		},
+	},
+	{
+		key: "collator",
 		kind: "string",
 		layers: ALL_LAYERS,
 		expects: `a provider-qualified model such as "anthropic/<model-id>"`,
 		default: () => undefined,
-		parse(raw) {
-			if (typeof raw !== "string" || parseModelSelector(raw) === undefined) {
-				throw new SettingError(`expected a provider-qualified model such as "anthropic/<model-id>"; got ${describe(raw)}`);
-			}
-			return raw;
-		},
+		parse: modelSelector,
 	},
 	enumSetting("thinking", THINKING_LEVELS, "medium"),
 	enumSetting("format", FORMATS, "text"),
@@ -149,6 +162,21 @@ export const SETTINGS: readonly SettingDef[] = [
 			const value = typeof raw === "bigint" ? Number(raw) : raw;
 			if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_TIMEOUT_SECONDS) {
 				throw new SettingError(`expected a whole number of seconds from 0 to ${MAX_TIMEOUT_SECONDS}; got ${describe(raw)}`);
+			}
+			return value;
+		},
+	},
+	{
+		key: "review.min_reviewers",
+		kind: "integer",
+		layers: ALL_LAYERS,
+		expects: `"all" or a whole number of reviewers`,
+		default: () => "all",
+		parse(raw) {
+			if (raw === "all") return raw;
+			const value = typeof raw === "bigint" ? Number(raw) : raw;
+			if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+				throw new SettingError(`expected "all" or a whole number of at least 1; got ${describe(raw)}`);
 			}
 			return value;
 		},
@@ -204,6 +232,13 @@ export const SETTINGS_BY_KEY: ReadonlyMap<string, SettingDef> = new Map(SETTINGS
 export interface ModelSelector {
 	provider: string;
 	id: string;
+}
+
+function modelSelector(raw: unknown): string {
+	if (typeof raw !== "string" || parseModelSelector(raw) === undefined) {
+		throw new SettingError(`expected a provider-qualified model such as "anthropic/<model-id>"; got ${describe(raw)}`);
+	}
+	return raw;
 }
 
 /** Split "provider/id" at the first slash; model ids may themselves contain slashes. */

@@ -34,6 +34,8 @@ export interface Finding {
 	in_diff: boolean;
 	/** Whether the finding meets the configured failure threshold. */
 	blocking: boolean;
+	/** Council reviews only: the reviewers that reported this problem, in council order. */
+	reported_by?: string[];
 }
 
 export type ReviewStatus = "passed" | "failed" | "no_changes" | "incomplete" | "error" | "cancelled";
@@ -50,6 +52,8 @@ export type ProblemReason =
 	| "missing_report"
 	| "invalid_report"
 	| "target_changed"
+	| "quorum_not_met"
+	| "collation_failed"
 	| "cancelled"
 	| "internal_error";
 
@@ -90,6 +94,29 @@ export interface Usage {
 	cost_usd?: number;
 }
 
+export type ParticipantStatus = "completed" | "failed" | "cancelled" | "skipped";
+
+export interface CouncilParticipant {
+	/** The model selector, with "#n" appended when the same model is listed more than once. */
+	label: string;
+	provider: string;
+	id: string;
+	thinking: ThinkingLevel;
+	status: ParticipantStatus;
+	/** Why the participant did not complete. */
+	problem?: { reason: ProblemReason; message: string };
+	usage?: Usage;
+}
+
+export interface CouncilSummary {
+	/** Reviewers that had to complete ("all" resolved to the reviewer count). */
+	min_reviewers: number;
+	/** In configuration order; `findings` counts the validated findings each one submitted. */
+	reviewers: Array<CouncilParticipant & { findings: number }>;
+	/** `merges` counts the groups of duplicates combined into one finding. "skipped" means there was nothing to reconcile. */
+	collator: CouncilParticipant & { merges: number };
+}
+
 export interface ReviewResult {
 	schema_version: typeof SCHEMA_VERSION;
 	tool: { name: "shipshape"; version: string };
@@ -99,7 +126,9 @@ export interface ReviewResult {
 	/** Present whenever the status is incomplete, error, or cancelled. */
 	problem?: { reason: ProblemReason; message: string };
 	target?: TargetSummary;
+	/** Single-model reviews; a council review reports its models under `council` instead. */
 	model?: { provider: string; id: string; thinking: ThinkingLevel };
+	council?: CouncilSummary;
 	policy: { fail_on: Severity };
 	summary?: string;
 	findings: Finding[];

@@ -37,7 +37,7 @@ describe("configuration precedence", () => {
 			projectRoot: project,
 			env,
 		});
-		expect(config.model).toBe("anthropic/some-model");
+		expect(config.model).toEqual(["anthropic/some-model"]);
 		expect(config.review.timeout_seconds).toBe(300);
 		expect(config.review.fail_on).toBe("medium");
 		expect(config.review.exclude).toEqual(["vendor/**", "generated/**"]);

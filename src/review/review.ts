@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { ConfigError, type CliSettings, loadConfig } from "../config/resolve.js";
 import { globalConfigDir, piStateDir } from "../config/paths.js";
-import { type OutputFormat, parseModelSelector, type ShipshapeConfig, type ThinkingLevel } from "../config/schema.js";
+import { type OutputFormat, parseModelSelector, type ShipshapeConfig, type Source, type ThinkingLevel } from "../config/schema.js";
 import {
 	createModelRuntime,
 	ensureAuth,
 	findModel,
 	type ModelRuntimeFactory,
 	modelsFilePath,
+	type PiModel,
 	SetupError,
 } from "../runtime/pi.js";
 import { GitError } from "../target/git.js";
@@ -20,22 +21,27 @@ import {
 	type TargetKind,
 } from "../target/resolve.js";
 import { VERSION } from "../version.js";
+import { councilLabels, type CouncilProgress, runCouncil } from "./council.js";
 import { type CancelSignal, countFindings, exitCodeFor, isBlocking, sortFindings } from "./policy.js";
 import { buildSystemPrompt, buildTaskPrompt, DEFAULT_FOCUS, readStandards } from "./prompt.js";
-import { type ProgressEvent, runReviewSession, type SessionOutcome } from "./run.js";
+import { type ProgressEvent, reportedUsage, runReviewSession, type SessionOutcome } from "./run.js";
 import {
+	type CouncilSummary,
 	type Finding,
 	type ProblemReason,
 	type ReviewResult,
 	type ReviewStatus,
 	SCHEMA_VERSION,
 	type TargetSummary,
-	type Usage,
 } from "./types.js";
+
+export { reportedUsage } from "./run.js";
 
 export type ReviewProgress =
 	| ProgressEvent
-	| { type: "start"; description: string; files: number; model: string }
+	| CouncilProgress
+	/** `collator` is set for a council (two or more models). */
+	| { type: "start"; description: string; files: number; models: string[]; collator?: string }
 	| { type: "no_changes"; description: string };
 
 export interface ReviewRequest {
@@ -113,8 +119,21 @@ export async function review(request: ReviewRequest): Promise<ReviewResponse> {
 				`No model configured. Set model = "provider/model-id" in ${globalConfigDir(request.env)}/config.toml or .shipshape.toml, or pass --model.`,
 			);
 		}
-		const selector = parseModelSelector(config.model)!;
-		model = { provider: selector.provider, id: selector.id, thinking: config.thinking };
+		const models = config.model;
+		const council = models.length > 1;
+		const minReviewers = config.review.min_reviewers === "all" ? models.length : config.review.min_reviewers;
+		if (minReviewers > models.length) {
+			const { sources } = resolved;
+			throw new Stop(
+				"config_error",
+				`review.min_reviewers is ${minReviewers}${from(sources["review.min_reviewers"])}, but only ${models.length} model(s) are configured${from(sources.model)}. Lower it with --min-reviewers, or configure more models.`,
+			);
+		}
+		const collator = council ? (config.collator ?? models[0]!) : undefined;
+		if (!council) {
+			const selector = parseModelSelector(models[0]!)!;
+			model = { provider: selector.provider, id: selector.id, thinking: config.thinking };
+		}
 		const focus = await readFocus(config.review.focus_file);
 
 		// Model and credentials are validated before the target is resolved, even though an empty
@@ -124,11 +143,14 @@ export async function review(request: ReviewRequest): Promise<ReviewResponse> {
 			authFile: config.auth_file,
 			modelsFile: modelsFilePath(globalConfigDir(request.env)),
 		});
-		let piModel;
-		let auth;
+		const setup = new Map<string, { model: PiModel; subscription: boolean }>();
 		try {
-			piModel = findModel(runtime, selector);
-			auth = await ensureAuth(runtime, selector.provider, config.auth_file);
+			for (const name of new Set([...models, ...(collator ? [collator] : [])])) {
+				const selector = parseModelSelector(name)!;
+				const piModel = findModel(runtime, selector);
+				const auth = await ensureAuth(runtime, selector.provider, config.auth_file);
+				setup.set(name, { model: piModel, subscription: auth.subscription });
+			}
 		} catch (error) {
 			throw error instanceof SetupError ? new Stop(error.reason, error.message) : error;
 		}
@@ -163,13 +185,13 @@ export async function review(request: ReviewRequest): Promise<ReviewResponse> {
 			type: "start",
 			description: target.description,
 			files: target.kind === "all" ? target.inventory.length : target.files.length,
-			model: `${selector.provider}/${selector.id}`,
+			models,
+			...(collator ? { collator } : {}),
 		});
 
-		const outcome = await runReviewSession({
+		const shared = {
 			target,
 			runtime,
-			model: piModel,
 			thinking: config.thinking,
 			agentDir: piStateDir(request.env),
 			systemPrompt,
@@ -178,7 +200,17 @@ export async function review(request: ReviewRequest): Promise<ReviewResponse> {
 			timeoutSeconds: config.review.timeout_seconds,
 			signal: request.signal,
 			onProgress: request.onProgress,
-		});
+		};
+		const member = (name: string, label: string) => ({ label, selector: parseModelSelector(name)!, ...setup.get(name)! });
+		const labels = councilLabels(models);
+		const outcome: SessionOutcome & { council?: CouncilSummary } = collator
+			? await runCouncil({
+					...shared,
+					reviewers: models.map((name, position) => member(name, labels[position]!)),
+					collator: member(collator, collator),
+					minReviewers,
+				})
+			: await runReviewSession({ ...shared, model: setup.get(models[0]!)!.model });
 
 		const limitations = [...standards.limitations, ...task.limitations];
 		if (target.excluded.length > 0) limitations.push(`${target.excluded.length} file(s) excluded by configuration were not reviewed.`);
@@ -211,7 +243,9 @@ export async function review(request: ReviewRequest): Promise<ReviewResponse> {
 				diffOmitted: task.diffOmitted,
 				problem: cancelled ? { reason: "cancelled", message: "The review was cancelled." } : problem,
 				cancelSignal: request.cancelSignal?.(),
-				hideCost: auth.subscription,
+				// A council's usage already accounts for each member's sign-in.
+				hideCost: !collator && setup.get(models[0]!)!.subscription,
+				...(outcome.council ? { council: outcome.council } : {}),
 			}),
 		};
 	} catch (error) {
@@ -247,6 +281,12 @@ async function readFocus(path: string | undefined): Promise<string> {
 	}
 }
 
+/** " (from <where>)" for a configuration value's source, or nothing for a default. */
+function from(source: Source): string {
+	if (source.kind === "default") return "";
+	return source.kind === "cli" ? " (from the command line)" : ` (from ${source.path})`;
+}
+
 function hasBlocking(outcome: SessionOutcome, config: ShipshapeConfig): boolean {
 	return (outcome.report?.findings ?? []).some((finding) => isBlocking(finding.severity, config.review.fail_on));
 }
@@ -255,6 +295,7 @@ interface FinishParts {
 	config?: ShipshapeConfig;
 	target?: ReviewTarget;
 	model?: { provider: string; id: string; thinking: ThinkingLevel };
+	council?: CouncilSummary;
 	outcome?: SessionOutcome;
 	limitations?: string[];
 	diffOmitted?: string[];
@@ -289,6 +330,7 @@ function finish(
 		...(parts.problem ? { problem: parts.problem } : {}),
 		...(parts.target ? { target: summarizeTarget(parts.target) } : {}),
 		...(parts.model ? { model: { ...parts.model, thinking: parts.outcome?.thinking ?? parts.model.thinking } } : {}),
+		...(parts.council ? { council: parts.council } : {}),
 		policy: { fail_on: failOn },
 		...(summary ? { summary } : {}),
 		findings,
@@ -302,13 +344,6 @@ function finish(
 		started_at: base.startedAt,
 		duration_ms: Date.now() - base.started,
 	};
-}
-
-/** List-price cost is meaningless for a subscription sign-in, so it is left out rather than shown. */
-export function reportedUsage(usage: Usage | undefined, subscription: boolean): Usage | undefined {
-	if (!usage || !subscription) return usage;
-	const { cost_usd: _listPrice, ...tokens } = usage;
-	return tokens;
 }
 
 function summarizeTarget(target: ReviewTarget): TargetSummary {
