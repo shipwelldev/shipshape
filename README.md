@@ -146,7 +146,9 @@ files changed during the review, the result is `incomplete` (`target_changed`).
 
 ## Output and exit status
 
-`--format text` (default) prints a readable report on stdout and progress on stderr.
+`--format text` (default) prints a readable report on stdout and progress on stderr. Findings
+are numbered most severe first, each starting with its severity and location; finding 3 is `F3`
+in the JSON output.
 `--format json` prints one JSON document on stdout, with no color or control codes.
 
 | Status | Exit | Meaning |
