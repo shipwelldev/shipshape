@@ -1,17 +1,21 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { AgentSession, AgentSessionEvent, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, ModelRuntime, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "../config/schema.js";
 import { createReviewSession, type PiModel } from "../runtime/pi.js";
 import type { ReviewTarget } from "../target/resolve.js";
 import { createSubmitReviewTool, type Report, type SubmissionState } from "./submit-tool.js";
 import type { ProblemReason, Usage } from "./types.js";
 
-export type ProgressEvent =
+export type ProgressEvent = (
 	| { type: "tool"; name: string; detail: string }
 	| { type: "tool_error"; name: string; message: string }
 	| { type: "retry"; attempt: number; maxAttempts: number; message: string }
 	| { type: "compaction" }
-	| { type: "repair"; message: string };
+	| { type: "repair"; message: string }
+) & {
+	/** Council member the event came from; absent for a single-model review. */
+	source?: string;
+};
 
 export interface SessionRunOptions {
 	target: ReviewTarget;
@@ -22,9 +26,11 @@ export interface SessionRunOptions {
 	systemPrompt: string;
 	taskPrompt: string;
 	exclude: readonly string[];
-	/** Whole-review deadline in seconds; 0 disables it. */
+	/** Session deadline in seconds; 0 disables it. */
 	timeoutSeconds: number;
 	signal: AbortSignal;
+	/** Labels progress events; set for council reviewers. */
+	source?: string;
 	onProgress?: (event: ProgressEvent) => void;
 }
 
@@ -59,16 +65,75 @@ export async function runReviewSession(options: SessionRunOptions): Promise<Sess
 		},
 		state,
 	);
+	const run = await runAgentSession({
+		workspace: options.target.workspace,
+		runtime: options.runtime,
+		model: options.model,
+		thinking: options.thinking,
+		agentDir: options.agentDir,
+		systemPrompt: options.systemPrompt,
+		taskPrompt: options.taskPrompt,
+		customTools: [tool],
+		role: "reviewer",
+		submitted: () => state.report !== undefined,
+		missingReportPrompt: MISSING_REPORT_PROMPT,
+		timeoutSeconds: options.timeoutSeconds,
+		signal: options.signal,
+		source: options.source,
+		onProgress: options.onProgress,
+	});
 
+	const outcome: SessionOutcome = { ...run, report: state.report };
+	if (run.cancelled || run.problem) return outcome;
+	const problem = (reason: ProblemReason, message: string): SessionOutcome => ({ ...outcome, problem: { reason, message } });
+	if (!state.report) return problem("missing_report", "The reviewer finished without submitting a structured report.");
+	if (state.unresolved) {
+		return problem(
+			"invalid_report",
+			`The reviewer's report still had ${state.unresolved.length} invalid finding(s) after ${state.rejections - 1} repair attempt(s); they were dropped.`,
+		);
+	}
+	return outcome;
+}
+
+export interface AgentRunOptions {
+	workspace: string;
+	runtime: ModelRuntime;
+	model: PiModel;
+	thinking: ThinkingLevel;
+	agentDir: string;
+	systemPrompt: string;
+	taskPrompt: string;
+	/** Pi built-in tools (default: the read-only inspection tools). */
+	builtinTools?: readonly string[];
+	customTools: ToolDefinition[];
+	/** Who is running, for progress and problem messages. */
+	role: "reviewer" | "collator";
+	/** Whether the structured-result tool has recorded a submission. */
+	submitted(): boolean;
+	/** Sent once when the session ends without a submission. */
+	missingReportPrompt: string;
+	/** Session deadline in seconds; 0 disables it. */
+	timeoutSeconds: number;
+	signal: AbortSignal;
+	source?: string;
+	onProgress?: (event: ProgressEvent) => void;
+}
+
+/** A settled session. Timeouts and provider failures are classified here; the caller judges the submission. */
+export type AgentRunOutcome = Omit<SessionOutcome, "report">;
+
+export async function runAgentSession(options: AgentRunOptions): Promise<AgentRunOutcome> {
 	if (options.signal.aborted) return { cancelled: true, filesRead: [] };
 	const session = await createReviewSession({
-		workspace: options.target.workspace,
+		workspace: options.workspace,
 		agentDir: options.agentDir,
 		runtime: options.runtime,
 		model: options.model,
 		thinking: options.thinking,
 		systemPrompt: options.systemPrompt,
-		customTools: [tool],
+		...(options.builtinTools ? { builtinTools: options.builtinTools } : {}),
+		customTools: options.customTools,
 	});
 	// Cancelled while the session was starting: that abort event has already fired, so the
 	// listener registered below would never see it. Stop before any model request.
@@ -77,11 +142,12 @@ export async function runReviewSession(options: SessionRunOptions): Promise<Sess
 		return { cancelled: true, filesRead: [] };
 	}
 
-	const reads = new ReadTracker(options.target.workspace);
+	const emit = (event: ProgressEvent) => options.onProgress?.(options.source ? { ...event, source: options.source } : event);
+	const reads = new ReadTracker(options.workspace);
 	const unsubscribe = session.subscribe((event) => {
 		reads.observe(event);
 		const progress = toProgress(event);
-		if (progress) options.onProgress?.(progress);
+		if (progress) emit(progress);
 	});
 
 	let timedOut = false;
@@ -100,9 +166,9 @@ export async function runReviewSession(options: SessionRunOptions): Promise<Sess
 	try {
 		await session.prompt(options.taskPrompt);
 		await session.waitForIdle();
-		if (!state.report && !stopped() && !lastRunFailed(session)) {
-			options.onProgress?.({ type: "repair", message: "reviewer ended without submitting a report; asking for it" });
-			await session.prompt(MISSING_REPORT_PROMPT);
+		if (!options.submitted() && !stopped() && !lastRunFailed(session)) {
+			emit({ type: "repair", message: `${options.role} ended without submitting a report; asking for it` });
+			await session.prompt(options.missingReportPrompt);
 			await session.waitForIdle();
 		}
 	} catch (error) {
@@ -118,19 +184,15 @@ export async function runReviewSession(options: SessionRunOptions): Promise<Sess
 	const thinking = session.thinkingLevel as ThinkingLevel;
 	session.dispose();
 
-	const base = { report: state.report, filesRead: reads.paths(), thinking, ...(usage ? { usage } : {}) };
+	const base = { filesRead: reads.paths(), thinking, ...(usage ? { usage } : {}) };
 	if (options.signal.aborted) return { ...base, cancelled: true };
-	const problem = (reason: ProblemReason, message: string): SessionOutcome => ({ ...base, cancelled: false, problem: { reason, message } });
-	if (timedOut) return problem("timeout", `The review did not finish within ${options.timeoutSeconds} seconds.`);
+	const problem = (reason: ProblemReason, message: string): AgentRunOutcome => ({ ...base, cancelled: false, problem: { reason, message } });
+	if (timedOut) {
+		const what = options.role === "reviewer" ? "The review" : "Collation";
+		return problem("timeout", `${what} did not finish within ${options.timeoutSeconds} seconds.`);
+	}
 	if (thrown) return problem("provider_error", thrown.message);
 	if (failure) return problem("provider_error", failure);
-	if (!state.report) return problem("missing_report", "The reviewer finished without submitting a structured report.");
-	if (state.unresolved) {
-		return problem(
-			"invalid_report",
-			`The reviewer's report still had ${state.unresolved.length} invalid finding(s) after ${state.rejections - 1} repair attempt(s); they were dropped.`,
-		);
-	}
 	return { ...base, cancelled: false };
 }
 
@@ -159,6 +221,13 @@ function sumUsage(session: AgentSession): Usage | undefined {
 	if (!seen) return undefined;
 	if (cost > 0) usage.cost_usd = Math.round(cost * 1e6) / 1e6;
 	return usage;
+}
+
+/** List-price cost is meaningless for a subscription sign-in, so it is left out rather than shown. */
+export function reportedUsage(usage: Usage | undefined, subscription: boolean): Usage | undefined {
+	if (!usage || !subscription) return usage;
+	const { cost_usd: _listPrice, ...tokens } = usage;
+	return tokens;
 }
 
 function toProgress(event: AgentSessionEvent): ProgressEvent | undefined {

@@ -22,7 +22,7 @@ import {
 import { VERSION } from "../version.js";
 import { type CancelSignal, countFindings, exitCodeFor, isBlocking, sortFindings } from "./policy.js";
 import { buildSystemPrompt, buildTaskPrompt, DEFAULT_FOCUS, readStandards } from "./prompt.js";
-import { type ProgressEvent, runReviewSession, type SessionOutcome } from "./run.js";
+import { type ProgressEvent, reportedUsage, runReviewSession, type SessionOutcome } from "./run.js";
 import {
 	type Finding,
 	type ProblemReason,
@@ -30,8 +30,9 @@ import {
 	type ReviewStatus,
 	SCHEMA_VERSION,
 	type TargetSummary,
-	type Usage,
 } from "./types.js";
+
+export { reportedUsage } from "./run.js";
 
 export type ReviewProgress =
 	| ProgressEvent
@@ -302,13 +303,6 @@ function finish(
 		started_at: base.startedAt,
 		duration_ms: Date.now() - base.started,
 	};
-}
-
-/** List-price cost is meaningless for a subscription sign-in, so it is left out rather than shown. */
-export function reportedUsage(usage: Usage | undefined, subscription: boolean): Usage | undefined {
-	if (!usage || !subscription) return usage;
-	const { cost_usd: _listPrice, ...tokens } = usage;
-	return tokens;
 }
 
 function summarizeTarget(target: ReviewTarget): TargetSummary {

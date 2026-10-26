@@ -101,12 +101,14 @@ export interface ReviewSessionOptions {
 	model: PiModel;
 	thinking: ThinkingLevel;
 	systemPrompt: string;
+	/** Pi built-in tools to enable (default: the read-only inspection tools). */
+	builtinTools?: readonly string[];
 	customTools: ToolDefinition[];
 }
 
 /**
  * A fresh in-memory session with nothing discovered from disk: no extensions, skills,
- * prompt templates, context files, or Pi settings. Everything the reviewer sees is
+ * prompt templates, context files, or Pi settings. Everything the model sees is
  * supplied by Ship Shape.
  */
 export async function createReviewSession(options: ReviewSessionOptions): Promise<AgentSession> {
@@ -137,7 +139,7 @@ export async function createReviewSession(options: ReviewSessionOptions): Promis
 		modelRuntime: options.runtime,
 		model: options.model,
 		thinkingLevel: options.thinking,
-		tools: [...READ_ONLY_TOOLS, ...options.customTools.map((tool) => tool.name)],
+		tools: [...(options.builtinTools ?? READ_ONLY_TOOLS), ...options.customTools.map((tool) => tool.name)],
 		customTools: options.customTools,
 		resourceLoader,
 		sessionManager: SessionManager.inMemory(options.workspace),
