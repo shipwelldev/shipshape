@@ -230,6 +230,23 @@ export function reportedUsage(usage: Usage | undefined, subscription: boolean): 
 	return tokens;
 }
 
+/** Sum several sessions' usage. Cost is left out when any of them is a subscription sign-in, since a partial total misleads. */
+export function totalUsage(parts: ReadonlyArray<{ usage?: Usage; subscription: boolean }>): Usage | undefined {
+	const used = parts.filter((part) => part.usage);
+	if (used.length === 0) return undefined;
+	const total: Usage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
+	let cost: number | undefined;
+	for (const { usage } of used) {
+		total.input_tokens += usage!.input_tokens;
+		total.output_tokens += usage!.output_tokens;
+		total.cache_read_tokens += usage!.cache_read_tokens;
+		total.cache_write_tokens += usage!.cache_write_tokens;
+		if (usage!.cost_usd !== undefined) cost = (cost ?? 0) + usage!.cost_usd;
+	}
+	if (cost !== undefined && !used.some((part) => part.subscription)) total.cost_usd = Math.round(cost * 1e6) / 1e6;
+	return total;
+}
+
 function toProgress(event: AgentSessionEvent): ProgressEvent | undefined {
 	switch (event.type) {
 		case "tool_execution_start":
