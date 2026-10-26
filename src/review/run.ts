@@ -235,7 +235,7 @@ function toProgress(event: AgentSessionEvent): ProgressEvent | undefined {
 		case "tool_execution_start":
 			return { type: "tool", name: event.toolName, detail: describeToolArgs(event.toolName, event.args) };
 		case "tool_execution_end":
-			if (!event.isError || event.toolName === "submit_review") return undefined;
+			if (!event.isError || event.toolName === "submit_review" || event.toolName === "submit_collation") return undefined;
 			return { type: "tool_error", name: event.toolName, message: firstText(event.result) };
 		case "auto_retry_start":
 			return { type: "retry", attempt: event.attempt, maxAttempts: event.maxAttempts, message: event.errorMessage };
@@ -260,6 +260,8 @@ function describeToolArgs(name: string, args: Record<string, unknown> | undefine
 			return str(a.path) || ".";
 		case "submit_review":
 			return `${Array.isArray(a.findings) ? a.findings.length : 0} finding(s)`;
+		case "submit_collation":
+			return `${Array.isArray(a.merges) ? a.merges.length : 0} merge(s)`;
 		default:
 			return "";
 	}

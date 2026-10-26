@@ -34,6 +34,8 @@ export interface Finding {
 	in_diff: boolean;
 	/** Whether the finding meets the configured failure threshold. */
 	blocking: boolean;
+	/** Council reviews only: the reviewers that reported this problem, in council order. */
+	reported_by?: string[];
 }
 
 export type ReviewStatus = "passed" | "failed" | "no_changes" | "incomplete" | "error" | "cancelled";
